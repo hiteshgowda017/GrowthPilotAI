@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { AnimatePresence } from 'framer-motion';
 
-// Component Targets mapped to your new FLAT folder layout
 import Sidebar from './components/Sidebar';
 import CommandDeck from './components/CommandDeck';
 import IntelligenceMatrix from './components/IntelligenceMatrix';
@@ -19,15 +18,13 @@ export default function App() {
     business_name: '', website: '', industry: '', location: '', goal: ''
   });
 
- const handleAnalyze = async (e: React.FormEvent) => {
+  const handleAnalyze = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError(null);
     try {
-      // DYNAMIC URL LOGIC
       const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
       const response = await axios.post(`${API_BASE_URL}/api/growth-analysis`, formData);
-      
       setAnalysisResult(response.data);
       setCurrentTab('growth'); 
     } catch (err: any) {
@@ -36,12 +33,14 @@ export default function App() {
       setIsLoading(false);
     }
   };
+
   return (
     <div className="min-h-screen flex bg-[#030303] overflow-x-hidden selection:bg-zinc-800 selection:text-white">
       
       <Sidebar currentTab={currentTab} setCurrentTab={setCurrentTab} />
 
-      <main className="flex-1 ml-72 p-12 relative min-h-screen">
+      {/* MOBILE RESPONSIVE FIX: md:ml-72 adds margin ONLY on desktop. pb-32 adds scroll room for the mobile bottom nav. */}
+      <main className="flex-1 w-full md:ml-72 p-4 md:p-12 pb-32 md:pb-12 relative min-h-screen">
         <div className="absolute top-[-10%] left-[30%] w-[600px] h-[600px] bg-gradient-to-br from-zinc-800/10 to-transparent rounded-full blur-[140px] pointer-events-none" />
 
         <AnimatePresence mode="wait">
