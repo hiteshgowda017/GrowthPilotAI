@@ -8,7 +8,7 @@ load_dotenv()
 class MarketGapAgent:
     def __init__(self):
         self.client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
-        self.model = "llama-3.3-70b-versatile"
+        self.model = "openai/gpt-oss-20b"
 
     async def detect_gaps(self, biz_profile: dict, comp_intelligence: list) -> dict:
         print("[MarketGapAgent] Spotting structural market voids and vulnerabilities...")
