@@ -87,6 +87,37 @@ class GrowthPilotEngine:
 
         return "No verified external search data was available."
 
+    async def browser_research(self, prompt: str) -> str:
+        """Use Groq's built-in browser search for real-time research."""
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a web research agent. Search the live web. "
+                            "Use multiple relevant sources. Do not guess. "
+                            "Return concise evidence with company names, locations "
+                            "and source references when available."
+                        ),
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                reasoning_effort="low",
+                include_reasoning=False,
+                tool_choice="required",
+                tools=[{"type": "browser_search"}],
+                max_completion_tokens=5000,
+            )
+            content = response.choices[0].message.content
+            if content:
+                return content
+        except Exception as exc:
+            print(f"[BROWSER SEARCH WARNING] {type(exc).__name__}: {exc}")
+
+        return ""
+
     async def generate_json(
         self,
         prompt: str,
@@ -230,64 +261,110 @@ Return exactly this structure:
         industry: str,
         location: str,
     ) -> dict:
-        """Deep live audit with controlled concurrency to avoid rate limiting."""
-        print(f"=== DEEP VISIBILITY AUDIT: {name.upper()} ===")
+        """Production visibility audit using browser search + DDGS fallback."""
+        print(f"=== PRODUCTION VISIBILITY AUDIT: {name.upper()} ===")
 
-        target_queries = [
-            f'"{name}" "{location}" reviews services',
-            f'"{name}" "{location}" website social media',
-            f'"{name}" "{location}" contact',
-        ]
+        target_prompt = f"""
+Research this exact business on the LIVE WEB.
 
-        local_queries = [
-            f'"{industry}" businesses "{location}"',
-            f'"{industry}" businesses near "{location}"',
-            f'site:justdial.com "{industry}" "{location}"',
-            f'site:sulekha.com "{industry}" "{location}"',
-            f'site:indiamart.com "{industry}" "{location}"',
-        ]
+Business: {name}
+Website: {website or "Not provided"}
+Industry: {industry}
+Location: {location}
 
-        global_queries = [
-            f'top global "{industry}" companies',
-            f'leading international "{industry}" companies',
-            f'largest "{industry}" companies worldwide',
-            f'global "{industry}" market leaders',
-        ]
+Find the official website/profiles, current services, local presence,
+search footprint, reviews/public customer signals, social profiles and
+recent mentions. Prefer primary and current sources. Return concrete
+evidence and source references. Do not guess.
+"""
 
-        semaphore = asyncio.Semaphore(3)
+        local_prompt = f"""
+Perform DEEP LOCAL COMPETITOR DISCOVERY on the LIVE WEB.
 
-        async def safe_search(query: str, region: str) -> str:
-            async with semaphore:
-                return await self.robust_search(
-                    query,
-                    max_results=6,
-                    retries=2,
-                    region=region,
-                )
+Industry: {industry}
+Location: {location}
 
-        async def collect(queries: list[str], region: str, limit: int) -> str:
-            results = await asyncio.gather(
-                *(safe_search(query, region) for query in queries)
+Find real businesses competing locally. Do not only return famous companies.
+Search local business websites, local results, Justdial, Sulekha, IndiaMART,
+Facebook, Instagram, LinkedIn, local directories and publications.
+
+Look specifically for small, newly established, niche, independent or poorly
+recognized businesses in or near {location}. For every candidate, verify that
+it is a real business and explain why it is locally relevant. Return evidence
+and source references. Do not invent names.
+"""
+
+        global_prompt = f"""
+Perform GLOBAL MARKET LEADER DISCOVERY on the LIVE WEB.
+
+Industry: {industry}
+
+Find real international companies that are relevant leaders or major
+competitors in this industry. Prefer official company sites, reputable
+business sources, industry publications and market reports.
+
+Do not return random famous companies. Each company must be genuinely
+relevant to {industry}. Return evidence and source references. Do not invent.
+"""
+
+        # Sequential research reduces provider rate limiting.
+        target_browser = await self.browser_research(target_prompt)
+        local_browser = await self.browser_research(local_prompt)
+        global_browser = await self.browser_research(global_prompt)
+
+        # DDGS remains the secondary live-search layer.
+        if not target_browser:
+            target_browser = await self.robust_search(
+                f'"{name}" "{location}" reviews services website social media',
+                max_results=8,
+                retries=2,
+                region="in-en",
             )
-            usable = [
-                result for result in results
-                if result and "No verified external search data" not in result
-            ]
-            return "\n\n".join(usable)[:limit]
+        if not local_browser:
+            local_browser = await self.robust_search(
+                f'"{industry}" businesses "{location}" local competitors',
+                max_results=8,
+                retries=2,
+                region="in-en",
+            )
+        if not global_browser:
+            global_browser = await self.robust_search(
+                f'global leading "{industry}" companies market leaders',
+                max_results=8,
+                retries=2,
+                region="us-en",
+            )
 
-        target_data, local_data, global_data = await asyncio.gather(
-            collect(target_queries, "in-en", 14000),
-            collect(local_queries, "in-en", 22000),
-            collect(global_queries, "us-en", 18000),
-        )
+        target_data = target_browser[:18000]
+        local_data = local_browser[:24000]
+        global_data = global_browser[:20000]
+
+        if not (target_data.strip() or local_data.strip() or global_data.strip()):
+            return {
+                "target": {
+                    "name": name,
+                    "score": 0,
+                    "evidence_level": "None",
+                    "evidence_summary": "No live evidence was returned.",
+                },
+                "local_competitors": [],
+                "market_leaders": [],
+                "insight_summary": (
+                    "The live research providers returned no usable evidence. "
+                    "No competitor or visibility score was generated."
+                ),
+                "research_coverage": {
+                    "status": "no_live_evidence",
+                    "browser_search": True,
+                    "ddgs_fallback": True,
+                },
+            }
 
         prompt = f"""
-You are GrowthPilot AI's Deep Digital Visibility Research Engine.
+You are GrowthPilot AI's senior competitive intelligence analyst.
 
-Research:
-A) the exact target business,
-B) very local/small businesses,
-C) global market leaders.
+This is an EVIDENCE-ONLY report. The supplied material comes from LIVE WEB
+RESEARCH. Do not use pretrained/general knowledge to fill missing facts.
 
 TARGET
 Name: {name}
@@ -295,58 +372,68 @@ Website: {website or "Not provided"}
 Industry: {industry}
 Location: {location}
 
-TARGET LIVE EVIDENCE
+TARGET LIVE RESEARCH
 {target_data}
 
-LOCAL LIVE EVIDENCE
+LOCAL LIVE RESEARCH
 {local_data}
 
-GLOBAL LIVE EVIDENCE
+GLOBAL LIVE RESEARCH
 {global_data}
 
-RULES
-1. Use only supplied live search evidence.
-2. Never invent a company or fact.
-3. Local competitors must actually be relevant to {location}.
-4. Include small/poorly recognized local businesses when the search evidence
-   identifies them, even if their public footprint is limited.
-5. Directory results may discover local businesses, but do not treat a
-   directory listing alone as proof of a business claim.
+STRICT RULES
+1. Use only information supported by the supplied live research.
+2. NEVER invent a company, competitor, review, score, location or fact.
+3. A directory listing may identify a local company, but does not prove
+   services, quality or market position unless supported by evidence.
+4. Prefer small local companies when evidence shows they exist and are relevant.
+5. Keep local competitors geographically relevant to {location}.
 6. Global leaders must be genuinely international and relevant to {industry}.
-7. Scores are evidence-based estimates from 0-100, not audited market share.
-8. Do not fill missing slots with invented names.
-9. Return ONLY valid JSON.
+7. Score DIGITAL VISIBILITY, not company size or business quality.
+8. Scores are estimates from observable evidence, not audited market share.
+9. If evidence is weak, use a low evidence level rather than guessing.
+10. If evidence does not support a recommendation, do not make it.
+11. Never use generic industry knowledge as if it were live evidence.
+12. Return ONLY valid JSON.
 
+OUTPUT
 Return exactly:
 {{
   "target": {{
     "name": "{name}",
     "score": 0,
-    "evidence_level": "High, Medium, Low, or None"
+    "evidence_level": "High, Medium, Low, or None",
+    "evidence_summary": "What was actually found"
   }},
   "local_competitors": [
     {{
-      "name": "Real local business",
+      "name": "Real local company",
       "score": 0,
-      "evidence": "Evidence found in the live search data",
-      "evidence_level": "High, Medium, or Low"
+      "evidence_level": "High, Medium, or Low",
+      "evidence_summary": "Why it is relevant based on live evidence"
     }}
   ],
   "market_leaders": [
     {{
-      "name": "Real global leader",
+      "name": "Real global company",
       "score": 0,
-      "evidence": "Evidence found in the live search data",
-      "evidence_level": "High, Medium, or Low"
+      "evidence_level": "High, Medium, or Low",
+      "evidence_summary": "Why it is relevant based on live evidence"
     }}
   ],
-  "insight_summary": "Evidence-based summary of local and global visibility."
+  "insight_summary": "Evidence-based summary only.",
+  "research_coverage": {{
+    "target": "Live browser/DDGS research",
+    "local": "Live browser/DDGS research",
+    "global": "Live browser/DDGS research"
+  }}
 }}
 
 Return up to 5 local competitors and up to 5 global leaders when supported.
+Never fill a missing slot with a guess.
 """
-        print("[VISIBILITY] Sending controlled live research to Groq...")
-        return await self.generate_json(prompt, temperature=0.2)
+        print("[VISIBILITY] Synthesizing evidence-only audit...")
+        return await self.generate_json(prompt, temperature=0.1)
 
 
 try:
