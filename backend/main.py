@@ -1,16 +1,24 @@
 import os
 import json
 import asyncio
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from duckduckgo_search import DDGS
 from groq import AsyncGroq
 from dotenv import load_dotenv
 
+# Current DDGS package
+from ddgs import DDGS
+
 load_dotenv()
 
-app = FastAPI()
+app = FastAPI(title="GrowthPilot AI API")
+
+
+# ==========================================================
+# CORS
+# ==========================================================
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,6 +28,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ==========================================================
+# REQUEST MODEL
+# ==========================================================
+
 class AnalysisRequest(BaseModel):
     business_name: str
     website: str
@@ -27,172 +40,557 @@ class AnalysisRequest(BaseModel):
     location: str
     goal: str
 
+
+# ==========================================================
+# GROWTH PILOT ENGINE
+# ==========================================================
+
 class GrowthPilotEngine:
+
     def __init__(self):
-        self.client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
-        self.model = "openai/gpt-oss-20b"
-    async def robust_search(self, query: str, max_results: int = 3, retries: int = 3) -> str:
-        """Universal scraper with retries to ensure real data is pulled."""
+
+        api_key = os.getenv("GROQ_API_KEY")
+
+        if not api_key:
+            raise RuntimeError(
+                "GROQ_API_KEY is missing. Add it to your deployment environment variables."
+            )
+
+        self.client = AsyncGroq(api_key=api_key)
+
+        # Current Groq model
+        self.model = os.getenv(
+            "GROQ_MODEL",
+            "openai/gpt-oss-20b"
+        )
+
+    # ======================================================
+    # WEB SEARCH
+    # ======================================================
+
+    async def robust_search(
+        self,
+        query: str,
+        max_results: int = 5,
+        retries: int = 2
+    ) -> str:
+
+        """
+        Performs web search without allowing search failure
+        to crash the complete GrowthPilot analysis.
+        """
+
         for attempt in range(retries):
+
             try:
-                await asyncio.sleep(1.5 + attempt) 
-                with DDGS() as ddgs:
-                    results = list(ddgs.text(query, max_results=max_results))
-                    if results:
-                        return "\n".join([f"- {r.get('title')}: {r.get('body')}" for r in results])
-            except Exception:
-                continue 
-        
-        return "SEARCH_BLOCKED"
 
-    # ==========================================================
-    # ENGINE 1: UNIVERSAL GROWTH INTELLIGENCE (DYNAMIC SCORING)
-    # ==========================================================
-    async def run_full_analysis(self, name: str, website: str, industry: str, location: str, goal: str) -> dict:
-        print(f"\n=== [INITIATING UNIVERSAL GROWTH ENGINE: {name.upper()}] ===")
-        
-        clean_url = website.replace("https://", "").replace("http://", "").split('/')[0]
+                print(f"[SEARCH] {query}")
 
-        print("Phase 1: Harvesting dynamic data...")
-        site_data = await self.robust_search(f"site:{clean_url} OR \"{name}\" {location} core services")
-        comp_data = await self.robust_search(f"top local {industry} competitors in {location}")
-        review_data = await self.robust_search(f"\"{name}\" OR top {industry} in {location} customer reviews complaints")
-        
-        master_prompt = f"""
-        You are GrowthPilot AI, an elite Enterprise Growth Consultant.
-        Target Client: {name} ({website})
-        Industry Context: {industry}
-        Geographic Market: {location}
-        Client Goal: {goal}
+                def do_search():
+                    results = DDGS().text(
+                        query,
+                        max_results=max_results
+                    )
+                    return results
 
-        LIVE SEARCH DATA:
-        Target Site Info: {site_data}
-        Market Competitors: {comp_data}
-        Market Friction/Reviews: {review_data}
+                results = await asyncio.to_thread(do_search)
 
-        CRITICAL INTELLIGENCE DIRECTIVES:
-        1. NO GLOBAL CHAINS: You MUST name 5 REAL, SPECIFIC independent {industry} businesses in {location}. NEVER name global conglomerates.
-        2. HYPER-VERBOSITY PROTOCOL: Write massive, exhaustive, multi-sentence paragraphs for EVERY section. Minimum 150 words per phase.
-        3. CALCULATE DYNAMIC METRICS: Do NOT use copied or boilerplate numbers. You MUST calculate a unique AI Visibility Score and Vulnerability Score based on the scraped data context.
-        
-        Return ONLY a JSON object exactly matching this schema (Replace placeholders with calculated values):
-        {{
-            "metrics": {{
-                "market_rank": "Rank #<CALCULATE_RANK> out of <CALCULATE_TOTAL> Local Peers",
-                "ai_visibility_score": "<CALCULATE_UNIQUE_SCORE_0_TO_100>",
-                "vulnerability_score": "<CALCULATE_UNIQUE_SCORE_0_TO_100>",
-                "top_opportunity": "Specific 3-4 word niche"
-            }},
-            "report_markdown": "# === GrowthPilot Executive Intelligence Report ===\\n\\n## Phase I: Enterprise Structural Audit\\n(Write a massive, 3-paragraph operational teardown of {name} tailored to the {industry} sector.)\\n\\n## Phase II: The Competitive Matrix\\n(List 5 REAL local independent {industry} competitors in {location}. Write a deep dive for EACH.)\\n\\n## Phase III: Operational Intelligence\\n(Write a lengthy analysis of technical/service gaps between {name} and local {industry} competitors.)\\n\\n## Phase IV: Vulnerability & Exploitation Strategy\\n(Select one real local competitor. Define their likely weaknesses. Provide an Attack Strategy.)\\n\\n## Phase V: Market Opportunity Mapping\\n(Identify 3 Untapped Customer Segments specific to {location} for this industry.)\\n\\n## Phase VI: Algorithmic Visibility Index\\n(Write a highly technical paragraph measuring how visible {name} is compared to local peers.)\\n\\n## Phase VII: Strategic Growth Roadmap\\n(Write extensive, multi-sentence explanations for the Quick Wins, 30-Day, 90-Day, and 1-Year plans based on the client's goal: {goal}.)\\n\\n## Phase VIII: The Tactical Battle Plan\\n(Target one specific local competitor. List an incredibly detailed, 5-step concrete execution plan.)"
-        }}
-        """
+                if results:
 
-        try:
-            strategy_res = await self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "You output strictly as JSON. You MUST calculate unique integer scores. No emojis. No hallucinated mega-corporations."},
-                    {"role": "user", "content": master_prompt}
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.45 
-            )
-            return json.loads(strategy_res.choices[0].message.content)
-        except Exception as e:
-            print(f"[Growth AI Fatal Error] {str(e)}")
-            raise HTTPException(status_code=500, detail="Growth Engine offline or data extraction failed.")
+                    formatted = []
 
-    # ==========================================================
-    # ENGINE 2: UNIVERSAL VISIBILITY AUDIT
-    # ==========================================================
-    async def run_visibility_audit(self, name: str, website: str, industry: str, location: str) -> dict:
-        print(f"\n=== [INITIATING UNIVERSAL VISIBILITY AUDIT: {name.upper()}] ===")
-        
-        print("Phase 1: Harvesting footprint data...")
-        local_search = await self.robust_search(f"top independent {industry} businesses in {location} directory")
-        global_search = await self.robust_search(f"largest market share global {industry} leaders titans")
-        target_search = await self.robust_search(f"\"{name}\" {location} digital presence reviews social media")
+                    for result in results:
 
-        visibility_prompt = f"""
-        You are a Senior SEO & Digital Footprint Analyst.
-        Target Company: {name} ({website})
-        Industry Context: {industry}
-        Geographic Market: {location}
+                        title = result.get("title", "")
+                        body = result.get("body", "")
+                        href = result.get("href", "")
 
-        Data Context:
-        Target Presence: {target_search}
-        Local Peers: {local_search}
-        Global Leaders: {global_search}
+                        formatted.append(
+                            f"- {title}\n"
+                            f"  {body}\n"
+                            f"  Source: {href}"
+                        )
 
-        CRITICAL INSTRUCTIONS:
-        1. Identify exactly 5 REAL, INDEPENDENT local competitors operating in the {industry} space in {location}.
-        2. DO NOT INCLUDE GLOBAL CHAINS OR FRANCHISES IN THE LOCAL LIST.
-        3. Identify exactly 5 REAL global/national market leaders in the {industry} sector.
-        4. CALCULATE A UNIQUE Visibility Score (0 to 100) based on digital footprint strength. Do NOT copy boilerplate numbers. You MUST calculate real, dynamic scores.
-        5. STRICT NO-CRASH POLICY: DO NOT USE EMOJIS. DO NOT use markdown code blocks. Output strictly JSON.
+                    return "\n".join(formatted)
 
-        Return strictly as a JSON object matching this exact schema (Replace placeholders with your calculated integers and text):
-        {{
-            "target": {{ "name": "{name}", "score": <CALCULATE_UNIQUE_SCORE> }},
-            "local_competitors": [
-                {{ "name": "<Real Independent Local Competitor 1>", "score": <CALCULATE_SCORE_1> }},
-                {{ "name": "<Real Independent Local Competitor 2>", "score": <CALCULATE_SCORE_2> }},
-                {{ "name": "<Real Independent Local Competitor 3>", "score": <CALCULATE_SCORE_3> }},
-                {{ "name": "<Real Independent Local Competitor 4>", "score": <CALCULATE_SCORE_4> }},
-                {{ "name": "<Real Independent Local Competitor 5>", "score": <CALCULATE_SCORE_5> }}
-            ],
-            "market_leaders": [
-                {{ "name": "<Global Industry Leader 1>", "score": <CALCULATE_GLOBAL_SCORE_1> }},
-                {{ "name": "<Global Industry Leader 2>", "score": <CALCULATE_GLOBAL_SCORE_2> }},
-                {{ "name": "<Global Industry Leader 3>", "score": <CALCULATE_GLOBAL_SCORE_3> }},
-                {{ "name": "<Global Industry Leader 4>", "score": <CALCULATE_GLOBAL_SCORE_4> }},
-                {{ "name": "<Global Industry Leader 5>", "score": <CALCULATE_GLOBAL_SCORE_5> }}
-            ],
-            "insight_summary": "A 2-sentence expert summary on digital visibility within the {industry} sector."
-        }}
-        """
+            except Exception as e:
+
+                print(
+                    f"[SEARCH WARNING] Attempt "
+                    f"{attempt + 1}/{retries}: {str(e)}"
+                )
+
+                await asyncio.sleep(1)
+
+        # IMPORTANT:
+        # Search failure should NOT stop the AI analysis.
+
+        print("[SEARCH WARNING] Search unavailable.")
+
+        return "No external search data was available."
+
+
+    # ======================================================
+    # GROQ JSON CALL
+    # ======================================================
+
+    async def generate_json(
+        self,
+        prompt: str,
+        temperature: float = 0.4
+    ) -> dict:
 
         try:
-            res = await self.client.chat.completions.create(
+
+            response = await self.client.chat.completions.create(
+
                 model=self.model,
+
                 messages=[
-                    {"role": "system", "content": "You output strictly as raw JSON. You MUST calculate dynamic integer scores. No markdown, no emojis."},
-                    {"role": "user", "content": visibility_prompt}
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
                 ],
-                response_format={"type": "json_object"},
-                temperature=0.35 
+
+                # GPT-OSS reasoning configuration
+                reasoning_effort="low",
+                include_reasoning=False,
+
+                # JSON output
+                response_format={
+                    "type": "json_object"
+                },
+
+                temperature=temperature,
+
+                # Prevent unnecessarily huge responses
+                max_completion_tokens=8000
             )
-            return json.loads(res.choices[0].message.content)
+
+            content = response.choices[0].message.content
+
+            if not content:
+                raise ValueError("Groq returned an empty response.")
+
+            return json.loads(content)
+
+        except json.JSONDecodeError as e:
+
+            print(
+                f"[JSON ERROR] Model returned invalid JSON: {str(e)}"
+            )
+
+            raise HTTPException(
+                status_code=500,
+                detail="AI returned an invalid JSON response."
+            )
+
         except Exception as e:
-            print(f"[Visibility Audit AI Error] {str(e)}")
-            raise HTTPException(status_code=500, detail="Visibility Engine offline. Data extraction failed.")
+
+            print(
+                f"[GROQ ERROR] {type(e).__name__}: {str(e)}"
+            )
+
+            raise HTTPException(
+                status_code=500,
+                detail=f"Groq AI request failed: {str(e)}"
+            )
+
+
+    # ======================================================
+    # ENGINE 1
+    # FULL GROWTH ANALYSIS
+    # ======================================================
+
+    async def run_full_analysis(
+        self,
+        name: str,
+        website: str,
+        industry: str,
+        location: str,
+        goal: str
+    ) -> dict:
+
+        print(
+            f"\n=== GROWTHPILOT ANALYSIS: "
+            f"{name.upper()} ==="
+        )
+
+        clean_url = (
+            website
+            .replace("https://", "")
+            .replace("http://", "")
+            .split("/")[0]
+        )
+
+        # --------------------------------------------------
+        # WEB RESEARCH
+        # --------------------------------------------------
+
+        print("[PHASE 1] Searching business information...")
+
+        site_data = await self.robust_search(
+            f'site:{clean_url} "{name}" services'
+        )
+
+        print("[PHASE 2] Searching competitors...")
+
+        competitor_data = await self.robust_search(
+            f'top independent {industry} businesses in {location}'
+        )
+
+        print("[PHASE 3] Searching reviews and customer problems...")
+
+        review_data = await self.robust_search(
+            f'"{name}" {location} reviews complaints customer experience'
+        )
+
+        # --------------------------------------------------
+        # LIMIT SEARCH DATA
+        # Prevent massive prompts
+        # --------------------------------------------------
+
+        site_data = site_data[:10000]
+        competitor_data = competitor_data[:10000]
+        review_data = review_data[:10000]
+
+        # --------------------------------------------------
+        # AI PROMPT
+        # --------------------------------------------------
+
+        prompt = f"""
+You are GrowthPilot AI, a practical business growth
+and market intelligence consultant.
+
+Analyze the following business.
+
+BUSINESS
+Name: {name}
+Website: {website}
+Industry: {industry}
+Location: {location}
+Goal: {goal}
+
+REAL-WORLD SEARCH DATA
+=====================
+
+BUSINESS DATA:
+{site_data}
+
+COMPETITOR DATA:
+{competitor_data}
+
+REVIEW / CUSTOMER DATA:
+{review_data}
+
+
+IMPORTANT RULES
+===============
+
+1. Use the provided search data as evidence.
+
+2. Do not invent specific facts about the company.
+
+3. If information is unavailable, clearly state that
+   the information could not be verified.
+
+4. Identify real local competitors only when supported
+   by the supplied search data.
+
+5. Do not use global corporations as local competitors.
+
+6. Scores must be based on the available evidence.
+
+7. Keep the report detailed but concise.
+
+8. Prioritize actionable business recommendations.
+
+9. Do not repeat the same information in multiple sections.
+
+10. Return ONLY valid JSON.
+
+OUTPUT FORMAT
+=============
+
+{{
+    "metrics": {{
+        "market_rank": "Rank or estimated position based on available evidence",
+        "ai_visibility_score": "0-100",
+        "vulnerability_score": "0-100",
+        "top_opportunity": "Specific opportunity"
+    }},
+
+    "report_markdown": "# GrowthPilot Executive Intelligence Report\\n\\n## Phase I: Business Audit\\nDetailed analysis of the business based on available evidence.\\n\\n## Phase II: Competitive Landscape\\nIdentify relevant local competitors and explain their positioning.\\n\\n## Phase III: Business Gaps\\nExplain important service, marketing, digital and operational gaps.\\n\\n## Phase IV: Growth Opportunities\\nIdentify practical opportunities for growth.\\n\\n## Phase V: AI & Digital Visibility\\nExplain how the business can improve its online and AI visibility.\\n\\n## Phase VI: Strategic Roadmap\\nProvide actionable quick wins, 30-day actions, 90-day actions and longer-term recommendations.\\n\\n## Phase VII: Tactical Action Plan\\nProvide a clear step-by-step execution plan."
+    }}
+}}
+
+Remember:
+
+Return ONLY JSON.
+No markdown code block around the JSON.
+"""
+
+
+        print("[PHASE 4] Sending analysis to Groq...")
+
+        return await self.generate_json(
+            prompt,
+            temperature=0.4
+        )
+
+
+    # ======================================================
+    # ENGINE 2
+    # VISIBILITY AUDIT
+    # ======================================================
+
+    async def run_visibility_audit(
+        self,
+        name: str,
+        website: str,
+        industry: str,
+        location: str
+    ) -> dict:
+
+        print(
+            f"\n=== VISIBILITY AUDIT: "
+            f"{name.upper()} ==="
+        )
+
+        # --------------------------------------------------
+        # SEARCH
+        # --------------------------------------------------
+
+        local_search = await self.robust_search(
+            f'independent {industry} businesses in {location}'
+        )
+
+        target_search = await self.robust_search(
+            f'"{name}" {location} website reviews social media'
+        )
+
+        market_search = await self.robust_search(
+            f'leading companies in {industry} industry'
+        )
+
+        local_search = local_search[:8000]
+        target_search = target_search[:8000]
+        market_search = market_search[:8000]
+
+        # --------------------------------------------------
+        # PROMPT
+        # --------------------------------------------------
+
+        prompt = f"""
+You are a Senior SEO and Digital Visibility Analyst.
+
+TARGET BUSINESS
+===============
+
+Name: {name}
+Website: {website}
+Industry: {industry}
+Location: {location}
+
+
+SEARCH DATA
+===========
+
+TARGET:
+{target_search}
+
+LOCAL BUSINESSES:
+{local_search}
+
+MARKET LEADERS:
+{market_search}
+
+
+INSTRUCTIONS
+============
+
+1. Analyze the target business using the available evidence.
+
+2. Identify up to 5 real independent local competitors
+   from the supplied search data.
+
+3. Identify up to 5 relevant market leaders.
+
+4. Do not invent companies.
+
+5. Scores should be evidence-based estimates from 0 to 100.
+
+6. Do not use emojis.
+
+7. Return ONLY valid JSON.
+
+
+JSON FORMAT
+===========
+
+{{
+    "target": {{
+        "name": "{name}",
+        "score": 0
+    }},
+
+    "local_competitors": [
+        {{
+            "name": "Competitor",
+            "score": 0
+        }}
+    ],
+
+    "market_leaders": [
+        {{
+            "name": "Market Leader",
+            "score": 0
+        }}
+    ],
+
+    "insight_summary": "Two sentence summary of the digital visibility situation."
+}}
+
+Return ONLY JSON.
+"""
+
+        print("[VISIBILITY] Sending data to Groq...")
+
+        return await self.generate_json(
+            prompt,
+            temperature=0.3
+        )
+
 
 # ==========================================================
-# FASTAPI ROUTER ENDPOINTS
+# INITIALIZE ENGINE
 # ==========================================================
-engine = GrowthPilotEngine()
+
+try:
+
+    engine = GrowthPilotEngine()
+
+    print(
+        f"[STARTUP] GrowthPilot using model: "
+        f"{engine.model}"
+    )
+
+except Exception as e:
+
+    print(
+        f"[STARTUP ERROR] {str(e)}"
+    )
+
+    engine = None
+
+
+# ==========================================================
+# HEALTH CHECK
+# ==========================================================
+
+@app.get("/")
+async def root():
+
+    return {
+        "status": "online",
+        "service": "GrowthPilot AI",
+        "model": engine.model if engine else "not configured"
+    }
+
+
+@app.get("/health")
+async def health():
+
+    return {
+        "status": "healthy" if engine else "error",
+        "model": engine.model if engine else None,
+        "groq_configured": engine is not None
+    }
+
+
+# ==========================================================
+# GROWTH ANALYSIS API
+# ==========================================================
 
 @app.post("/api/growth-analysis")
-async def handle_growth_analysis(payload: AnalysisRequest):
+async def handle_growth_analysis(
+    payload: AnalysisRequest
+):
+
+    if engine is None:
+
+        raise HTTPException(
+            status_code=500,
+            detail="GrowthPilot backend is not configured. Check GROQ_API_KEY."
+        )
+
     try:
-        return await engine.run_full_analysis(
+
+        result = await engine.run_full_analysis(
             name=payload.business_name,
             website=payload.website,
             industry=payload.industry,
             location=payload.location,
             goal=payload.goal
         )
+
+        return result
+
+    except HTTPException:
+        raise
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+        print(
+            f"[GROWTH ENDPOINT ERROR] "
+            f"{type(e).__name__}: {str(e)}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Growth analysis failed: {str(e)}"
+        )
+
+
+# ==========================================================
+# VISIBILITY AUDIT API
+# ==========================================================
 
 @app.post("/api/visibility-audit")
-async def handle_visibility_audit(payload: AnalysisRequest):
+async def handle_visibility_audit(
+    payload: AnalysisRequest
+):
+
+    if engine is None:
+
+        raise HTTPException(
+            status_code=500,
+            detail="GrowthPilot backend is not configured. Check GROQ_API_KEY."
+        )
+
     try:
-        return await engine.run_visibility_audit(
+
+        result = await engine.run_visibility_audit(
             name=payload.business_name,
             website=payload.website,
             industry=payload.industry,
             location=payload.location
         )
+
+        return result
+
+    except HTTPException:
+        raise
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+        print(
+            f"[VISIBILITY ENDPOINT ERROR] "
+            f"{type(e).__name__}: {str(e)}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Visibility audit failed: {str(e)}"
+        )
