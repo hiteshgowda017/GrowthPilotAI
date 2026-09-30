@@ -1,85 +1,90 @@
 import os
 import json
 import asyncio
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from groq import AsyncGroq
 from dotenv import load_dotenv
 
 load_dotenv()
 
+
 class VisibilityIntelligenceAgent:
     def __init__(self):
         self.client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
-        self.model = "openai/gpt-oss-20b"
+        self.model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 
     def _scrape_brand_mentions(self, target: str) -> int:
-        """Synchronous scraper executed in a background thread context."""
         try:
             with DDGS() as ddgs:
-                # Search exact string matches to count organic digital footprint index
-                results = list(ddgs.text(f'"{target}"', max_results=20))
-                return len(results)
+                return len(list(ddgs.text(f'"{target}"', max_results=20)))
         except Exception as e:
-            print(f"[VisibilityAgent] Scraping failed for {target}: {str(e)}")
-            return 4 # Minimal safe fallback index number
+            print(f"[VisibilityAgent] DDGS search failed for {target}: {e}")
+            return 0
 
     async def _analyze_target(self, target: str):
-        """Worker node to offload and evaluate a single entity concurrently."""
-        # Offload the blocking network loop to a separate parallel thread
-        mention_count = await asyncio.to_thread(self._scrape_brand_mentions, target)
-        # Calculate visibility weight metrics dynamically
-        calculated_score = mention_count * 5
-        return {"company": target, "score": calculated_score}
+        mention_count = await asyncio.to_thread(
+            self._scrape_brand_mentions, target
+        )
+        return {
+            "company": target,
+            "score": min(100, mention_count * 5),
+            "mention_count": mention_count,
+        }
 
     async def run_audit(self, brand_name: str, competitors: list) -> dict:
-        print(f"[VisibilityAgent] Initializing parallel Share-of-Voice index loops...")
-        
-        targets = [brand_name] + [c for c in competitors if c.strip()]
-        
-        # Deploy all searches simultaneously in parallel
-        tasks = [self._analyze_target(t) for t in targets]
-        audit_results = await asyncio.gather(*tasks)
+        targets = [brand_name] + [
+            str(c).strip() for c in competitors if str(c).strip()
+        ]
+        audit_results = await asyncio.gather(
+            *(self._analyze_target(target) for target in targets)
+        )
 
-        # Separate the primary target metrics from competitor matrices
-        brand_data = next((item for item in audit_results if item["company"] == brand_name), {"score": 50})
-        competitor_matrix = [item for item in audit_results if item["company"] != brand_name]
+        brand_data = next(
+            (x for x in audit_results if x["company"] == brand_name),
+            {"company": brand_name, "score": 0, "mention_count": 0},
+        )
+        competitor_matrix = [
+            x for x in audit_results if x["company"] != brand_name
+        ]
 
-        # Use Groq to analyze the quantitative scores and extract qualitative insights
         prompt = f"""
-        You are a top-tier digital growth architect specialized in Search Engine Visibility and Share of Voice (SoV) metrics.
-        Analyze this raw brand visibility dataset and generate automated growth optimization recommendations.
+You are a digital growth architect specializing in search visibility.
 
-        Target Brand: {brand_name} (Visibility Score: {brand_data['score']}/100)
-        Competitor Comparison Matrix:
-        {json.dumps(competitor_matrix, indent=2)}
+Target Brand: {brand_name}
+Target Visibility Score: {brand_data["score"]}/100
 
-        TASK:
-        Provide exactly 2 contextual growth recommendations to improve search engine rankings, keyword indexing, and brand mentions online against these competitors.
+Competitor Comparison:
+{json.dumps(competitor_matrix, indent=2)}
 
-        CRITICAL: Return ONLY a valid JSON object matching this exact schema:
-        {{
-            "recommendations": ["Recommendation item 1", "Recommendation item 2"]
-        }}
-        Do NOT wrap in markdown formatting blocks.
-        """
+Provide exactly 2 practical recommendations for improving relevant search
+visibility, keyword indexing and online brand mentions.
+
+Return ONLY valid JSON:
+{{"recommendations":["Recommendation 1","Recommendation 2"]}}
+"""
 
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a deterministic business intelligence engine that outputs raw JSON objects only."},
-                    {"role": "user", "content": prompt}
+                    {"role": "system", "content": "Return valid JSON only."},
+                    {"role": "user", "content": prompt},
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.2
+                temperature=0.2,
             )
-            ai_insights = json.loads(response.choices[0].message.content)
+            content = response.choices[0].message.content
+            ai_insights = json.loads(content) if content else {}
         except Exception as e:
-            print(f"[VisibilityAgent] AI recommendation failed: {str(e)}")
-            ai_insights = {"recommendations": ["Expand organic backlink optimization networks.", "Deploy programmatic keyword tracking matrix channels."]}
+            print(f"[VisibilityAgent] AI recommendation failed: {e}")
+            ai_insights = {}
+
+        recommendations = ai_insights.get("recommendations", [])
+        if not isinstance(recommendations, list):
+            recommendations = []
 
         return {
             "visibility_score": brand_data["score"],
             "competitor_comparison": competitor_matrix,
-            "recommendations": ai_insights.get("recommendations", [])
+            "recommendations": recommendations[:2],
         }
