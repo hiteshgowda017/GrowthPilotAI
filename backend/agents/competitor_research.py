@@ -1,85 +1,84 @@
 import os
 import json
 import asyncio
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from groq import AsyncGroq
 from dotenv import load_dotenv
 
 load_dotenv()
 
+
 class CompetitorResearchAgent:
     def __init__(self):
         self.client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
-        self.model = "openai/gpt-oss-20b"
+        self.model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
 
     def _scrape_ddg(self, query: str) -> str:
-        """Synchronous scraping function to be offloaded to a thread."""
         search_results = []
         try:
             with DDGS() as ddgs:
-                # Limit to 7 to keep the context window tight and fast
-                results = ddgs.text(query, max_results=7)
-                for result in results:
-                    title = result.get("title", "")
-                    body = result.get("body", "")
-                    search_results.append(f"Title: {title} | Snippet: {body}")
+                for result in ddgs.text(query, max_results=7):
+                    search_results.append(
+                        f"Title: {result.get('title', '')} | "
+                        f"Snippet: {result.get('body', '')} | "
+                        f"Source: {result.get('href', '')}"
+                    )
             return "\n".join(search_results)
         except Exception as e:
-            print(f"[ResearchAgent] DuckDuckGo Scrape Failed: {str(e)}")
+            print(f"[ResearchAgent] DDGS search failed: {e}")
             return ""
 
     async def discover_competitors(self, industry: str, location: str) -> list:
-        print(f"[ResearchAgent] Deploying live web scrapers for {industry} in {location}...")
-        
-        search_query = f"top {industry} companies businesses in {location}"
-        
-        # Offload the blocking web scraper to a background thread
-        combined_results = await asyncio.to_thread(self._scrape_ddg, search_query)
+        print(f"[ResearchAgent] Live competitor search: {industry} in {location}")
+
+        combined_results = await asyncio.to_thread(
+            self._scrape_ddg,
+            f"top {industry} companies businesses in {location}",
+        )
 
         if not combined_results:
-             return ["Market Leader A", "Market Leader B", "Market Leader C"] # Safe fallback
+            return []
 
         prompt = f"""
-        You are a senior competitive intelligence analyst.
-        Your job is to identify the top 3 REAL competitors from the provided live search data.
+You are a competitive intelligence analyst.
+Identify up to 3 REAL competitors from the live search results below.
 
-        Target Market Context:
-        Industry: {industry}
-        Location: {location}
+Industry: {industry}
+Location: {location}
 
-        LIVE SEARCH RESULTS:
-        {combined_results}
+LIVE SEARCH RESULTS:
+{combined_results}
 
-        TASK:
-        Extract exactly 3 real, direct competitors or market leaders from the text.
-        Ignore blog articles, directories (like Yelp/G2), news sites, and non-business entities.
+Rules:
+- Use only businesses supported by the supplied search results.
+- Do not invent companies.
+- Ignore blogs, directories, news sites and non-business entities.
 
-        CRITICAL: Return ONLY a valid JSON object matching this exact schema:
-        {{
-            "competitors": ["Competitor Name 1", "Competitor Name 2", "Competitor Name 3"]
-        }}
-        Do NOT wrap the response in markdown.
-        """
+Return ONLY:
+{{"competitors":["Competitor 1","Competitor 2","Competitor 3"]}}
+"""
 
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a precise data-extraction AI that outputs only raw, valid JSON."},
-                    {"role": "user", "content": prompt}
+                    {"role": "system", "content": "Return valid JSON only."},
+                    {"role": "user", "content": prompt},
                 ],
                 response_format={"type": "json_object"},
-                temperature=0.1 # Very low for deterministic data extraction
+                temperature=0.1,
             )
+            content = response.choices[0].message.content
+            if not content:
+                return []
 
-            data = json.loads(response.choices[0].message.content)
-            
-            # Extract and return just the flat list of names for the Orchestrator
-            competitor_list = data.get("competitors", [])
-            print(f"[ResearchAgent] Identified valid targets: {competitor_list}")
-            
-            return competitor_list[:3] # Ensure we only pass 3 targets downstream to maintain speed
-            
+            data = json.loads(content)
+            competitors = data.get("competitors", [])
+            if not isinstance(competitors, list):
+                return []
+
+            return [str(x).strip() for x in competitors if str(x).strip()][:3]
+
         except Exception as e:
-            print(f"[ResearchAgent] LLM Extraction Error: {str(e)}")
-            return ["Primary Competitor", "Secondary Competitor", "Tertiary Competitor"]
+            print(f"[ResearchAgent] Competitor extraction failed: {e}")
+            return []
