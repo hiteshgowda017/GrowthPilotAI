@@ -43,6 +43,12 @@ class GrowthPilotEngine:
         self.model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
         # Browser Search is explicitly supported by GPT-OSS models.
         self.browser_model = os.getenv("GROQ_BROWSER_MODEL", "openai/gpt-oss-20b")
+        # Disabled by default so DDGS remains the dependable live-research
+        # path and a Groq browser-search quota issue cannot break the audit.
+        self.use_browser_research = (
+            os.getenv("GROQ_BROWSER_RESEARCH", "false").strip().lower()
+            == "true"
+        )
 
     async def robust_search(
         self,
@@ -145,7 +151,7 @@ class GrowthPilotEngine:
                 include_reasoning=False,
                 response_format={"type": "json_object"},
                 temperature=temperature,
-                max_completion_tokens=8000,
+                max_completion_tokens=5000,
             )
 
             content = response.choices[0].message.content
@@ -167,11 +173,25 @@ class GrowthPilotEngine:
         except HTTPException:
             raise
         except Exception as exc:
-            print(f"[GROQ ERROR] {type(exc).__name__}: {exc}")
+            message = str(exc)
+            print(f"[GROQ ERROR] {type(exc).__name__}: {message}")
+
+            # Preserve 429 so the visibility audit can fall back to its
+            # live DDGS evidence instead of failing the entire request.
+            if "429" in message or "rate_limit_exceeded" in message.lower():
+                raise HTTPException(
+                    status_code=429,
+                    detail=(
+                        "Groq rate limit reached. GrowthPilot is using "
+                        "the live DDGS research fallback for this audit."
+                    ),
+                )
+
             raise HTTPException(
                 status_code=502,
-                detail=f"Groq AI request failed: {exc}",
+                detail=f"Groq AI request failed: {message}",
             )
+
 
     @staticmethod
     def clean_domain(website: str) -> str:
@@ -259,6 +279,169 @@ Return exactly this structure:
         print("[PHASE 4] Sending live research to Groq...")
         return await self.generate_json(prompt, temperature=0.4)
 
+    @staticmethod
+    def _parse_search_results(raw: str) -> list[dict]:
+        """Parse the compact DDGS format used by robust_search()."""
+        if not raw:
+            return []
+
+        import re
+
+        pattern = re.compile(
+            r"-\s*(?P<title>.*?)\n\s*"
+            r"(?P<body>.*?)\n\s*"
+            r"Source:\s*(?P<href>\S+)",
+            re.DOTALL,
+        )
+        items = []
+        for match in pattern.finditer(raw):
+            title = " ".join(match.group("title").split())
+            body = " ".join(match.group("body").split())
+            href = match.group("href").strip()
+            if title or href:
+                items.append({"title": title, "body": body, "href": href})
+        return items
+
+    @staticmethod
+    def _candidate_name(title: str, href: str) -> str:
+        import re
+
+        value = " ".join((title or "").split())
+        value = re.sub(
+            r"\s*[|]\s*(Justdial|Sulekha|IndiaMART|Facebook|Instagram|LinkedIn).*?$",
+            "",
+            value,
+            flags=re.IGNORECASE,
+        )
+        value = re.sub(
+            r"\s*[-–—]\s*(Justdial|Sulekha|IndiaMART|Facebook|Instagram|LinkedIn).*?$",
+            "",
+            value,
+            flags=re.IGNORECASE,
+        )
+        value = value.strip(" -|:")
+
+        generic = (
+            "top ",
+            "best ",
+            "list of",
+            "directory",
+            "businesses in",
+            "companies in",
+            "near me",
+        )
+        if not value or value.lower().startswith(generic):
+            try:
+                return urlparse(href).netloc.replace("www.", "")
+            except Exception:
+                return ""
+        return value[:100]
+
+    @classmethod
+    def _build_visibility_ddgs_fallback(
+        cls,
+        name: str,
+        target_raw: str,
+        local_raw: str,
+        global_raw: str,
+    ) -> dict:
+        """Build a usable audit without another Groq call when quota is exhausted."""
+        target_items = cls._parse_search_results(target_raw)
+        local_items = cls._parse_search_results(local_raw)
+        global_items = cls._parse_search_results(global_raw)
+
+        def rank_candidates(items: list[dict], limit: int = 5) -> list[dict]:
+            counts: dict[str, dict] = {}
+            for item in items:
+                candidate = cls._candidate_name(item["title"], item["href"])
+                if not candidate:
+                    continue
+                key = candidate.casefold()
+                entry = counts.setdefault(
+                    key,
+                    {"name": candidate, "sources": set(), "mentions": 0},
+                )
+                entry["mentions"] += 1
+                if item["href"]:
+                    entry["sources"].add(item["href"])
+
+            ranked = sorted(
+                counts.values(),
+                key=lambda x: (len(x["sources"]), x["mentions"]),
+                reverse=True,
+            )
+
+            output = []
+            for row in ranked[:limit]:
+                evidence_count = min(
+                    100,
+                    20
+                    + len(row["sources"]) * 12
+                    + max(0, row["mentions"] - 1) * 5,
+                )
+                level = (
+                    "High"
+                    if len(row["sources"]) >= 3
+                    else "Medium"
+                    if len(row["sources"]) >= 2
+                    else "Low"
+                )
+                output.append(
+                    {
+                        "name": row["name"],
+                        "score": evidence_count,
+                        "evidence_level": level,
+                        "evidence_summary": (
+                            f"Discovered through {row['mentions']} live DDGS search "
+                            f"result(s) across {len(row['sources'])} source URL(s)."
+                        ),
+                    }
+                )
+            return output
+
+        unique_target_urls = {
+            x["href"] for x in target_items if x.get("href")
+        }
+        target_score = min(100, 15 + len(unique_target_urls) * 8)
+        target_level = (
+            "High" if len(unique_target_urls) >= 5
+            else "Medium" if len(unique_target_urls) >= 2
+            else "Low" if unique_target_urls else "None"
+        )
+
+        locals_ = rank_candidates(local_items)
+        globals_ = rank_candidates(global_items)
+
+        return {
+            "target": {
+                "name": name,
+                "score": target_score,
+                "evidence_level": target_level,
+                "evidence_summary": (
+                    f"Live DDGS returned {len(target_items)} target evidence "
+                    f"items from {len(unique_target_urls)} source URL(s)."
+                ),
+            },
+            "local_competitors": locals_,
+            "market_leaders": globals_,
+            "insight_summary": (
+                f"GrowthPilot collected live DDGS evidence for {name}: "
+                f"{len(target_items)} target results, {len(locals_)} local "
+                f"competitor candidates, and {len(globals_)} global candidates. "
+                "The AI synthesis step was skipped because the Groq token "
+                "rate limit was reached; scores shown here are transparent "
+                "search-evidence estimates, not market-share measurements."
+            ),
+            "research_coverage": {
+                "status": "live_ddgs_fallback",
+                "provider": "DDGS",
+                "target_results": len(target_items),
+                "local_candidates": len(locals_),
+                "global_candidates": len(globals_),
+                "ai_synthesis": "rate_limited",
+            },
+        }
+
     async def run_visibility_audit(
         self,
         name: str,
@@ -266,83 +449,73 @@ Return exactly this structure:
         industry: str,
         location: str,
     ) -> dict:
-        """Production visibility audit using browser search + DDGS fallback."""
+        """Live DDGS visibility audit with optional Groq browser enrichment."""
         print(f"=== VISIBILITY AUDIT: {name.upper()} ===")
 
-        research_prompt = f"""
-You are conducting a real-time competitive intelligence audit for GrowthPilot.
+        # DDGS is ALWAYS collected. This is the core live-search layer.
+        target_queries = [
+            f'"{name}" "{location}" {industry} official website',
+            f'"{name}" "{location}" reviews social media',
+        ]
+        local_queries = [
+            f'"{industry}" businesses "{location}"',
+            f'"{industry}" companies near "{location}"',
+            f'"{industry}" independent businesses "{location}"',
+            f'site:justdial.com "{industry}" "{location}"',
+            f'site:sulekha.com "{industry}" "{location}"',
+        ]
+        global_queries = [
+            f'top global "{industry}" companies',
+            f'leading international "{industry}" companies',
+            f'largest "{industry}" companies worldwide',
+        ]
 
-TARGET BUSINESS
-Name: {name}
-Website: {website or "Not provided"}
-Industry: {industry}
-Location: {location}
-
-SEARCH THE LIVE WEB and build three evidence sets.
-
-A) TARGET BUSINESS
-Find and verify:
-- official website and public company profiles
-- current services/products
-- location/presence
-- search discoverability
-- reviews/public customer signals
-- LinkedIn, Instagram, Facebook and other public profiles
-- recent public mentions/news
-
-B) LOCAL COMPETITORS
-Find real businesses competing in or near {location}.
-Do NOT only return famous brands.
-Actively seek small, independent, niche, newer and poorly recognized businesses.
-Search local results, Justdial, Sulekha, IndiaMART, social networks, local
-publications and company websites.
-
-For each candidate verify that:
-1. it appears to be a real business,
-2. it is relevant to {industry}, and
-3. it is geographically relevant to {location}.
-A directory listing alone does not prove quality or market position.
-
-C) GLOBAL LEADERS
-Find genuinely international companies relevant to {industry}.
-Prefer official sources, reputable business/industry publications and market
-sources. Do not return a famous company merely because it is famous.
-
-For every named company provide supporting evidence and a URL/source when available.
-Do not guess. Organize findings under TARGET EVIDENCE, LOCAL COMPETITORS, GLOBAL LEADERS.
-"""
-
-        # One browser session is used to reduce latency and provider rate limits.
-        browser_data = await self.browser_research(research_prompt)
-
-        # DDGS remains the secondary LIVE search layer.
-        ddgs_data = ""
-        if not browser_data:
-            print("[VISIBILITY] Browser research unavailable; using DDGS fallback.")
-            fallback_queries = [
-                f'"{name}" "{location}" {industry} official reviews social media',
-                f'"{industry}" businesses "{location}" local competitors',
-                f'site:justdial.com "{industry}" "{location}"',
-                f'site:sulekha.com "{industry}" "{location}"',
-                f'top global "{industry}" companies',
-                f'leading international "{industry}" companies',
-            ]
-
+        async def collect(queries: list[str], region: str) -> str:
             chunks = []
-            for query in fallback_queries:
-                region = "us-en" if ("global" in query or "international" in query) else "in-en"
+            for query in queries:
                 result = await self.robust_search(
                     query,
-                    max_results=5,
-                    retries=2,
+                    max_results=6,
+                    retries=1,
                     region=region,
                 )
                 if result:
                     chunks.append(result)
+            return "\n\n".join(chunks)
 
-            ddgs_data = "\n\n".join(chunks)
+        target_raw, local_raw, global_raw = await asyncio.gather(
+            collect(target_queries, "in-en"),
+            collect(local_queries, "in-en"),
+            collect(global_queries, "us-en"),
+        )
 
-        live_data = (browser_data or ddgs_data).strip()
+        ddgs_data = "\n\n".join(
+            x for x in [target_raw, local_raw, global_raw] if x
+        ).strip()
+
+        # Optional Groq browser enrichment. It is OFF by default because
+        # DDGS already supplies the required live-search capability.
+        browser_data = ""
+        if self.use_browser_research:
+            browser_prompt = f"""
+Research this business and its competitive landscape on the live web.
+
+Business: {name}
+Industry: {industry}
+Location: {location}
+
+Find:
+1. verified target-business evidence,
+2. small/local competitors near {location},
+3. genuinely international competitors/leaders relevant to {industry}.
+
+Do not invent. Return concise evidence with URLs.
+"""
+            browser_data = await self.browser_research(browser_prompt)
+
+        live_data = "\n\n".join(
+            x for x in [ddgs_data, browser_data] if x
+        ).strip()
 
         if not live_data:
             return {
@@ -355,21 +528,28 @@ Do not guess. Organize findings under TARGET EVIDENCE, LOCAL COMPETITORS, GLOBAL
                 "local_competitors": [],
                 "market_leaders": [],
                 "insight_summary": (
-                    "No live search evidence was returned by the configured "
-                    "research providers. Scores were not generated."
+                    "No live search evidence was returned by DDGS or the "
+                    "optional Groq browser-search layer."
                 ),
                 "research_coverage": {
                     "status": "no_live_evidence",
-                    "browser_search": "attempted",
-                    "ddgs_fallback": "attempted",
+                    "ddgs": "attempted",
+                    "browser_search": "enabled" if self.use_browser_research else "disabled",
                 },
             }
 
-        synthesis_prompt = f"""
+        # When Groq is currently over quota, return a useful DDGS-only audit
+        # instead of surfacing a 429 to the user.
+        if not self.use_browser_research and not os.getenv("GROQ_BYPASS_SYNTHESIS"):
+            synthesis_enabled = True
+        else:
+            synthesis_enabled = True
+
+        if synthesis_enabled:
+            synthesis_prompt = f"""
 You are GrowthPilot senior competitive-intelligence analyst.
 
-Everything below is LIVE WEB RESEARCH. Use ONLY this evidence.
-Do not use general or pretrained knowledge to fill gaps.
+Use ONLY the live research below. Never use general knowledge to fill gaps.
 
 TARGET
 Name: {name}
@@ -377,51 +557,64 @@ Website: {website or "Not provided"}
 Industry: {industry}
 Location: {location}
 
-LIVE RESEARCH EVIDENCE
-======================
-{live_data[:50000]}
+LIVE EVIDENCE
+=============
+{live_data[:45000]}
 
-RULES
-1. Never invent a company, location, service, review, score or ranking.
-2. Local competitors must be genuinely relevant to {location}.
-3. Prefer smaller/independent local businesses when the evidence supports them.
-4. Global leaders must be genuinely international and relevant to {industry}.
-5. Directory listings identify candidates but do not prove quality or leadership.
-6. Score DIGITAL VISIBILITY only, not revenue, business quality or size.
-7. Scores are estimates from observable online signals.
-8. Give each company an evidence level: High, Medium or Low.
-9. If evidence is insufficient, omit the company rather than guessing.
-10. Recommendations must follow from evidence in the supplied research.
-11. Do not use generic industry knowledge as observed research.
-12. Return ONLY valid JSON.
+Rules:
+- Never invent a company, location, service, review, score or ranking.
+- Local competitors must be genuinely relevant to {location}.
+- Prefer small and independent local businesses when supported by evidence.
+- Global leaders must be genuinely international and relevant to {industry}.
+- Directory listings can identify a business but do not prove quality.
+- Score DIGITAL VISIBILITY only.
+- Scores are estimates from observed web signals.
+- Omit unsupported companies.
+- Return ONLY JSON.
 
-RETURN EXACTLY
-===============
+JSON:
 {{
   "target": {{
     "name": "{name}",
     "score": 0,
     "evidence_level": "High, Medium, Low, or None",
-    "evidence_summary": "Concrete evidence found for the target"
+    "evidence_summary": "Evidence found in live research"
   }},
   "local_competitors": [],
   "market_leaders": [],
-  "insight_summary": "Evidence-based comparison of the target against the discovered set.",
+  "insight_summary": "Evidence-based summary",
   "research_coverage": {{
     "status": "live_evidence",
-    "provider": "Groq Browser Search or DDGS fallback",
+    "provider": "DDGS",
     "target": "researched",
     "local": "researched",
     "global": "researched"
   }}
 }}
 
-Populate the two arrays with up to 5 verified companies each when supported.
-Each company object must have: name, score, evidence_level, evidence_summary.
-Never fill an empty slot with a guess.
+Populate up to 5 verified local competitors and 5 verified global leaders.
+Each item must contain name, score, evidence_level and evidence_summary.
 """
-        print("[VISIBILITY] Synthesizing live evidence...")
-        return await self.generate_json(synthesis_prompt, temperature=0.1)
+
+            try:
+                return await self.generate_json(synthesis_prompt, temperature=0.1)
+            except HTTPException as exc:
+                if exc.status_code == 429:
+                    print("[VISIBILITY] Groq quota exhausted; returning DDGS fallback.")
+                    return self._build_visibility_ddgs_fallback(
+                        name,
+                        target_raw,
+                        local_raw,
+                        global_raw,
+                    )
+                raise
+
+        return self._build_visibility_ddgs_fallback(
+            name,
+            target_raw,
+            local_raw,
+            global_raw,
+        )
 
 
 try:
