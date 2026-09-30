@@ -10,7 +10,13 @@ from groq import AsyncGroq
 from dotenv import load_dotenv
 from ddgs import DDGS
 
-from research_utils import summarize_fallback, rank_candidates, target_evidence
+# Support both Render layouts:
+# 1) Root Directory = backend -> "uvicorn main:app"
+# 2) Repository root -> "uvicorn backend.main:app"
+try:
+    from .research_utils import summarize_fallback, rank_candidates, target_evidence
+except ImportError:
+    from research_utils import summarize_fallback, rank_candidates, target_evidence
 
 load_dotenv()
 
@@ -364,13 +370,13 @@ Return exactly:
             return await self.generate_json(prompt, temperature=0.05)
         except HTTPException as exc:
             if exc.status_code == 429:
-                return {{
-                    "metrics": {{
+                return {
+                    "metrics": {
                         "market_rank": "AI synthesis unavailable — live evidence collected",
                         "ai_visibility_score": "Not calculated",
                         "vulnerability_score": "Not calculated",
                         "top_opportunity": "Review the verified competitor evidence in the Visibility Audit"
-                    }},
+                    },
                     "report_markdown": (
                         "# GrowthPilot Executive Intelligence Report\n\n"
                         "## Phase I: Live Research Collected\n"
@@ -383,7 +389,7 @@ Return exactly:
                         "## Phase III: Next Validation Step\n"
                         "Run AI synthesis again when the Groq token window is available."
                     )
-                }}
+                }
             raise
     async def run_visibility_audit(
         self,
