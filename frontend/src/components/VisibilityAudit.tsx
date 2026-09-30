@@ -24,6 +24,7 @@ export default function VisibilityAudit({ searchParams }: AuditProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<'local' | 'global'>('local');
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     // Only run the audit if a real business name has been entered in the Command Deck
@@ -73,7 +74,7 @@ export default function VisibilityAudit({ searchParams }: AuditProps) {
     };
 
     fetchVisibility();
-  }, [searchParams]);
+  }, [searchParams, retryCount]);
 
   // EMPTY STATE (This is what was broken in your pasted code!)
   if (!searchParams || !searchParams.business_name) {
@@ -100,7 +101,13 @@ export default function VisibilityAudit({ searchParams }: AuditProps) {
   if (error) {
     return (
       <div className="p-6 border border-red-500/20 bg-red-500/5 rounded-2xl text-red-400 text-sm font-mono text-center">
-        {error}
+        <div className="mb-4">{error}</div>
+        <button
+          onClick={() => setRetryCount((count) => count + 1)}
+          className="px-4 py-2 rounded-lg border border-red-500/30 bg-red-500/10 hover:bg-red-500/20 text-red-300 transition-colors"
+        >
+          Retry Live Audit
+        </button>
       </div>
     );
   }
@@ -122,7 +129,7 @@ export default function VisibilityAudit({ searchParams }: AuditProps) {
           <Radar className="w-5 h-5 text-indigo-400" />
           <h2 className="text-2xl font-bold text-white tracking-tight">Digital Visibility Audit</h2>
         </div>
-        <p className="text-zinc-400 text-sm">Aggregated search engine footprint and social media dominance index.</p>
+        <p className="text-zinc-400 text-sm">Live web footprint, local competitor discovery, and global market visibility.</p>
       </div>
 
       {/* AI INSIGHT SUMMARY */}
