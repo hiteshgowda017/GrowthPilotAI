@@ -104,6 +104,21 @@ def _match_score(item: dict, industry: str, location: str, role: str, target_nam
     industry_body_hits = sum(1 for term in industry_terms if term in body)
     location_hits = sum(1 for term in location_terms if term in title)
     location_body_hits = sum(1 for term in location_terms if term in body)
+
+    # Generic words such as "services" are not enough to establish an IT
+    # company. Require at least one strong sector signal for software/IT.
+    raw_industry = _norm(industry)
+    if raw_industry in {"it", "it services", "information technology", "software"} or "software" in raw_industry or "technology" in raw_industry:
+        strong_terms = {
+            "information technology", "it services", "software",
+            "software development", "technology", "technology consulting",
+            "cloud", "cybersecurity", "managed services",
+        }
+        strong_title = sum(1 for term in strong_terms if term in title)
+        strong_body = sum(1 for term in strong_terms if term in body)
+        if strong_title + strong_body == 0:
+            return -1000
+
     score += min(industry_hits * 25, 50)
     score += min(industry_body_hits * 8, 24)
     if role == 'local':
