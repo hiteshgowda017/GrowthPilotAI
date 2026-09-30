@@ -41,8 +41,29 @@ export default function VisibilityAudit({ searchParams }: AuditProps) {
           body: JSON.stringify(searchParams),
         });
 
-        if (!response.ok) throw new Error('Visibility Engine failed to respond or was rate-limited.');
-        const result = await response.json();
+        const responseText = await response.text();
+        let result: any = null;
+
+        try {
+          result = responseText ? JSON.parse(responseText) : null;
+        } catch {
+          result = null;
+        }
+
+        if (!response.ok) {
+          const backendMessage =
+            result?.detail ||
+            result?.message ||
+            responseText ||
+            `Visibility Engine returned HTTP ${response.status}.`;
+
+          throw new Error(backendMessage);
+        }
+
+        if (!result) {
+          throw new Error('Visibility Engine returned an empty response.');
+        }
+
         setData(result);
       } catch (err: any) {
         setError(err.message);
