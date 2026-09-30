@@ -219,31 +219,52 @@ class GrowthPilotEngine:
         print(f"=== GROWTHPILOT ANALYSIS: {name.upper()} ===")
 
         domain = self.clean_domain(website)
+        # Search the actual business/entity first. Industry and location are
+        # used as constraints, not as the primary search identity.
         target_queries = [
-            f'"{name}" "{location}" {industry} official website',
-            f'"{name}" "{location}" {industry} LinkedIn',
-            f'"{name}" "{location}" {industry} reviews',
+            f'"{name}" "{location}" official website',
+            f'"{name}" "{location}" {industry} services',
+            f'"{name}" "{location}" LinkedIn',
+            f'"{name}" "{location}" reviews',
+            f'"{name}" competitors "{location}"',
+            f'"{name}" alternatives "{location}"',
+            f'"{name}" similar companies "{location}"',
         ]
         if domain:
-            target_queries.append(f'site:{domain} "{name}" services')
-        else:
-            target_queries.append(f'"{name}" {industry} {location} services')
+            target_queries.extend([
+                f'site:{domain} {name} services',
+                f'site:{domain} {name} products solutions',
+            ])
 
+        # Competitor research is anchored to the actual target and then
+        # broadened to independent/local discovery.
         local_queries = [
-            f'"{industry}" "{location}" company',
+            f'"{name}" competitors "{location}"',
+            f'"{name}" alternatives "{location}"',
+            f'"{name}" similar companies "{location}"',
+            f'"{name}" competitors in "{location}"',
+            f'"{industry}" "{location}" independent company',
+            f'"{industry}" "{location}" local company',
             f'"{industry}" near "{location}" company',
-            f'"{industry}" independent "{location}"',
             f'site:justdial.com "{industry}" "{location}"',
             f'site:sulekha.com "{industry}" "{location}"',
+            f'site:indiamart.com "{industry}" "{location}"',
         ]
+
         global_queries = [
+            f'"{name}" global competitors',
+            f'"{name}" international competitors',
+            f'"{name}" global alternatives',
+            f'"{name}" similar companies worldwide',
             f'leading "{industry}" companies worldwide',
             f'"{industry}" global companies',
             f'"{industry}" multinational companies',
         ]
+
         review_queries = [
             f'"{name}" "{location}" reviews',
-            f'"{name}" "{location}" complaints customer experience',
+            f'"{name}" "{location}" complaints',
+            f'"{name}" "{location}" customer experience',
         ]
 
         async def collect(queries: list[str], region: str) -> str:
@@ -375,21 +396,32 @@ Return exactly:
         print(f"=== VISIBILITY AUDIT: {name.upper()} ===")
 
         # DDGS is ALWAYS collected. This is the core live-search layer.
+        # Search the exact target first, then discover competitors around it.
         target_queries = [
-            f'"{name}" "{location}" {industry} official website',
-            f'"{name}" "{location}" reviews social media',
+            f'"{name}" "{location}" official website',
+            f'"{name}" "{location}" {industry} services',
+            f'"{name}" "{location}" LinkedIn',
+            f'"{name}" "{location}" reviews',
         ]
         local_queries = [
-            f'"{industry}" businesses "{location}"',
-            f'"{industry}" companies near "{location}"',
-            f'"{industry}" independent businesses "{location}"',
+            f'"{name}" competitors "{location}"',
+            f'"{name}" alternatives "{location}"',
+            f'"{name}" similar companies "{location}"',
+            f'"{name}" competitors in "{location}"',
+            f'"{industry}" "{location}" independent company',
+            f'"{industry}" "{location}" local company',
+            f'"{industry}" near "{location}" company',
             f'site:justdial.com "{industry}" "{location}"',
             f'site:sulekha.com "{industry}" "{location}"',
+            f'site:indiamart.com "{industry}" "{location}"',
         ]
         global_queries = [
-            f'top global "{industry}" companies',
-            f'leading international "{industry}" companies',
-            f'largest "{industry}" companies worldwide',
+            f'"{name}" global competitors',
+            f'"{name}" international competitors',
+            f'"{name}" global alternatives',
+            f'"{name}" similar companies worldwide',
+            f'leading "{industry}" companies worldwide',
+            f'"{industry}" global companies',
         ]
 
         async def collect(queries: list[str], region: str) -> str:
