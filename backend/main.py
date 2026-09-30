@@ -215,28 +215,58 @@ class GrowthPilotEngine:
         location: str,
         goal: str,
     ) -> dict:
+        """Evidence-first executive growth analysis."""
         print(f"=== GROWTHPILOT ANALYSIS: {name.upper()} ===")
 
         domain = self.clean_domain(website)
-
+        target_queries = [
+            f'"{name}" "{location}" {industry} official website',
+            f'"{name}" "{location}" {industry} LinkedIn',
+            f'"{name}" "{location}" {industry} reviews',
+        ]
         if domain:
-            site_query = f'site:{domain} "{name}" services'
+            target_queries.append(f'site:{domain} "{name}" services')
         else:
-            site_query = f'"{name}" {industry} {location} services'
+            target_queries.append(f'"{name}" {industry} {location} services')
 
-        site_data, competitor_data, review_data = await asyncio.gather(
-            self.robust_search(site_query),
-            self.robust_search(
-                f'top independent {industry} businesses in {location}'
-            ),
-            self.robust_search(
-                f'"{name}" {location} reviews complaints customer experience'
-            ),
+        local_queries = [
+            f'"{industry}" "{location}" company',
+            f'"{industry}" near "{location}" company',
+            f'"{industry}" independent "{location}"',
+            f'site:justdial.com "{industry}" "{location}"',
+            f'site:sulekha.com "{industry}" "{location}"',
+        ]
+        global_queries = [
+            f'leading "{industry}" companies worldwide',
+            f'"{industry}" global companies',
+            f'"{industry}" multinational companies',
+        ]
+        review_queries = [
+            f'"{name}" "{location}" reviews',
+            f'"{name}" "{location}" complaints customer experience',
+        ]
+
+        async def collect(queries: list[str], region: str) -> str:
+            chunks = []
+            for query in queries:
+                result = await self.robust_search(query, max_results=6, retries=1, region=region)
+                if result:
+                    chunks.append(result)
+            return "\n\n".join(chunks)
+
+        target_data, local_data, global_data, review_data = await asyncio.gather(
+            collect(target_queries, "in-en"),
+            collect(local_queries, "in-en"),
+            collect(global_queries, "us-en"),
+            collect(review_queries, "in-en"),
         )
 
+        local_candidates = rank_candidates(local_data, industry, location, "local", name, 8)
+        global_candidates = rank_candidates(global_data, industry, location, "global", name, 8)
+        target_info = target_evidence(target_data, name, industry, location)
+
         prompt = f"""
-You are GrowthPilot AI, a practical business growth and market intelligence
-consultant.
+You are GrowthPilot's senior market-intelligence analyst.
 
 BUSINESS
 Name: {name}
@@ -245,42 +275,95 @@ Industry: {industry}
 Location: {location}
 Goal: {goal}
 
-REAL-WORLD LIVE SEARCH DATA
+LIVE VERIFIED SEARCH EVIDENCE
+=============================
+TARGET:
+{target_data[:14000]}
 
-BUSINESS DATA:
-{site_data[:10000]}
-
-COMPETITOR DATA:
-{competitor_data[:10000]}
-
-REVIEW / CUSTOMER DATA:
+REVIEWS:
 {review_data[:10000]}
 
-RULES
-1. Use the supplied live search data as evidence.
-2. Never invent specific company facts or competitors.
-3. Clearly say when something cannot be verified.
-4. Prefer relevant local competitors supported by the search data.
-5. Do not present unsupported scores as measured facts; label estimates as estimates.
-6. Prioritize practical, actionable recommendations.
-7. Return ONLY valid JSON.
+LOCAL COMPETITOR EVIDENCE:
+{local_data[:16000]}
 
-Return exactly this structure:
+GLOBAL MARKET EVIDENCE:
+{global_data[:14000]}
+
+DETERMINISTIC FILTERED CANDIDATES
+==================================
+Target:
+{json.dumps(target_info, indent=2)}
+
+Local:
+{json.dumps(local_candidates, indent=2)}
+
+Global:
+{json.dumps(global_candidates, indent=2)}
+
+ACCURACY CONTRACT
+=================
+- Use ONLY the evidence above.
+- A local competitor must be relevant to {location}.
+- A global company must genuinely operate in {industry}.
+- Reject entertainment, films, books, people and unrelated acronym meanings.
+- Never invent competitors, services, weaknesses, customers or rankings.
+- Treat scores as estimates, never audited market share.
+- Recommendations must be tied to an observed evidence signal.
+- Do not recommend new countries/markets without supporting evidence.
+- If something cannot be verified, say so.
+- Return ONLY valid JSON.
+
+REPORT QUALITY
+==============
+Answer:
+1. What was actually verified about the business?
+2. Who are the most relevant local competitors and why?
+3. Which global companies are genuinely relevant?
+4. What observable digital/market gaps exist?
+5. What should happen next and what evidence supports it?
+6. What remains unknown?
+
+Avoid generic filler such as "leverage AI", "expand globally", "use social media",
+or "improve SEO" unless a supplied signal gives a specific reason.
+
+Return exactly:
 {{
   "metrics": {{
-    "market_rank": "Evidence-based estimated position or Not enough verified data",
-    "ai_visibility_score": "0-100 estimate",
-    "vulnerability_score": "0-100 estimate",
-    "top_opportunity": "Specific evidence-based opportunity"
+    "market_rank": "Not enough verified data unless a defensible comparison exists",
+    "ai_visibility_score": "0-100 estimate based on observable search visibility",
+    "vulnerability_score": "0-100 estimate based on verified competitive gaps",
+    "top_opportunity": "One evidence-backed opportunity, or Insufficient verified evidence"
   }},
-  "report_markdown": "# GrowthPilot Executive Intelligence Report\n\n## Phase I: Business Audit\nBusiness analysis based on verified search evidence.\n\n## Phase II: Competitive Landscape\nRelevant competitors and positioning supported by the search data.\n\n## Phase III: Business Gaps\nImportant service, marketing and digital gaps.\n\n## Phase IV: Growth Opportunities\nPractical growth opportunities.\n\n## Phase V: AI & Digital Visibility\nWays to improve online and AI visibility.\n\n## Phase VI: Strategic Roadmap\nQuick wins, 30-day actions, 90-day actions and longer-term actions.\n\n## Phase VII: Tactical Action Plan\nA clear step-by-step execution plan."
+  "report_markdown": "# GrowthPilot Executive Intelligence Report\n\n## Phase I: Verified Business Audit\nConcrete verified facts and evidence coverage.\n\n## Phase II: Relevant Competitive Landscape\nLocal competitors first, then genuinely relevant global companies. Explain why each belongs.\n\n## Phase III: Evidence-Based Gaps\nOnly gaps supported by the supplied evidence. Separate verified gaps from unknowns.\n\n## Phase IV: Growth Opportunities\nPrioritized opportunities tied directly to observed evidence.\n\n## Phase V: Digital & AI Visibility\nSpecific discoverability observations and actions, not generic AI advice.\n\n## Phase VI: 30/90/180-Day Roadmap\nConcrete actions with a reason and measurable signal for each.\n\n## Phase VII: Risks, Unknowns & Validation\nWhat cannot be verified and what GrowthPilot should research next.\n\n## Phase VIII: Executive Action Plan\nA concise numbered plan based only on verified findings."
   }}
 }}
 """
-
-        print("[PHASE 4] Sending live research to Groq...")
-        return await self.generate_json(prompt, temperature=0.4)
-
+        print("[PHASE 4] Sending filtered live research to Groq...")
+        try:
+            return await self.generate_json(prompt, temperature=0.05)
+        except HTTPException as exc:
+            if exc.status_code == 429:
+                return {{
+                    "metrics": {{
+                        "market_rank": "AI synthesis unavailable — live evidence collected",
+                        "ai_visibility_score": "Not calculated",
+                        "vulnerability_score": "Not calculated",
+                        "top_opportunity": "Review the verified competitor evidence in the Visibility Audit"
+                    }},
+                    "report_markdown": (
+                        "# GrowthPilot Executive Intelligence Report\n\n"
+                        "## Phase I: Live Research Collected\n"
+                        "Live target, local, global and review evidence was collected, "
+                        "but AI synthesis is currently rate-limited.\n\n"
+                        "## Phase II: Verified Research\n"
+                        f"Target: {json.dumps(target_info)}\n\n"
+                        f"Local candidates: {json.dumps(local_candidates[:5])}\n\n"
+                        f"Global candidates: {json.dumps(global_candidates[:5])}\n\n"
+                        "## Phase III: Next Validation Step\n"
+                        "Run AI synthesis again when the Groq token window is available."
+                    )
+                }}
+            raise
     async def run_visibility_audit(
         self,
         name: str,
