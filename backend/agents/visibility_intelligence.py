@@ -10,7 +10,7 @@ load_dotenv()
 class VisibilityIntelligenceAgent:
     def __init__(self):
         self.client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
-        self.model = "llama-3.3-70b-versatile"
+        self.model = "openai/gpt-oss-20b"
 
     def _scrape_brand_mentions(self, target: str) -> int:
         """Synchronous scraper executed in a background thread context."""
