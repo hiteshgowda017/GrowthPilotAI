@@ -13,7 +13,7 @@ class CompetitorIntelligenceAgent:
     def __init__(self):
         # Asynchronous Groq client for parallel competitor processing
         self.client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
-        self.model = "llama-3.3-70b-versatile"
+        self.model = "openai/gpt-oss-20b"
 
     async def _analyze_single(self, competitor_name: str, target_biz: dict):
         """Internal method to research and analyze a single competitor."""
