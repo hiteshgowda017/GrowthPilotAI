@@ -45,45 +45,47 @@ class GrowthPilotEngine:
     async def robust_search(
         self,
         query: str,
-        max_results: int = 5,
+        max_results: int = 8,
         retries: int = 2,
+        region: str = "in-en",
     ) -> str:
-        """Run live DDGS search without blocking the FastAPI event loop."""
+        """Run resilient live DDGS metasearch with regional and engine fallbacks."""
         for attempt in range(1, retries + 1):
-            try:
-                print(f"[SEARCH] {query}")
+            for backend in ("auto", "google,brave,bing,duckduckgo"):
+                try:
+                    print(
+                        f"[SEARCH] region={region} backend={backend} query={query}"
+                    )
 
-                def do_search():
-                    # Use the installed ddgs package.
-                    with DDGS() as search:
-                        return list(
-                            search.text(
-                                query,
-                                max_results=max_results,
+                    def do_search():
+                        with DDGS() as search:
+                            return list(
+                                search.text(
+                                    query,
+                                    region=region,
+                                    safesearch="moderate",
+                                    max_results=max_results,
+                                    backend=backend,
+                                )
                             )
+
+                    results = await asyncio.to_thread(do_search)
+
+                    if results:
+                        return "\n".join(
+                            f"- {r.get('title', '')}\n"
+                            f"  {r.get('body', '')}\n"
+                            f"  Source: {r.get('href', '')}"
+                            for r in results
                         )
+                except Exception as exc:
+                    print(
+                        f"[SEARCH WARNING] {backend} failed for '{query}': "
+                        f"{type(exc).__name__}: {exc}"
+                    )
 
-                results = await asyncio.to_thread(do_search)
-
-                if results:
-                    formatted = []
-                    for result in results:
-                        formatted.append(
-                            f"- {result.get('title', '')}\n"
-                            f"  {result.get('body', '')}\n"
-                            f"  Source: {result.get('href', '')}"
-                        )
-                    return "\n".join(formatted)
-
-                print(f"[SEARCH WARNING] No results for: {query}")
-
-            except Exception as exc:
-                print(
-                    f"[SEARCH WARNING] Attempt {attempt}/{retries} failed: "
-                    f"{type(exc).__name__}: {exc}"
-                )
-                if attempt < retries:
-                    await asyncio.sleep(1)
+            if attempt < retries:
+                await asyncio.sleep(1)
 
         return "No verified external search data was available."
 
@@ -230,57 +232,149 @@ Return exactly this structure:
         industry: str,
         location: str,
     ) -> dict:
-        print(f"=== VISIBILITY AUDIT: {name.upper()} ===")
+        """
+        Deep live visibility research across:
+        - exact target business
+        - very local/small competitors
+        - global market leaders
+        """
+        print(f"=== DEEP VISIBILITY AUDIT: {name.upper()} ===")
 
-        local_search, target_search, market_search = await asyncio.gather(
-            self.robust_search(
-                f'independent {industry} businesses in {location}'
-            ),
-            self.robust_search(
-                f'"{name}" {location} website reviews social media'
-            ),
-            self.robust_search(
-                f'leading companies in {industry} industry'
-            ),
+        target_queries = [
+            f'"{name}" "{location}"',
+            f'"{name}" {location} reviews',
+            f'"{name}" {location} services',
+            f'"{name}" {location} contact',
+            f'"{name}" {location} Facebook Instagram LinkedIn',
+        ]
+
+        local_queries = [
+            f'"{industry}" "{location}" companies businesses',
+            f'"{industry}" businesses near "{location}"',
+            f'top "{industry}" businesses "{location}"',
+            f'site:justdial.com "{industry}" "{location}"',
+            f'site:sulekha.com "{industry}" "{location}"',
+            f'site:indiamart.com "{industry}" "{location}"',
+            f'site:facebook.com "{industry}" "{location}"',
+            f'site:instagram.com "{industry}" "{location}"',
+        ]
+
+        global_queries = [
+            f'top global "{industry}" companies',
+            f'leading global "{industry}" companies',
+            f'largest "{industry}" companies worldwide',
+            f'global "{industry}" market leaders',
+            f'best known international "{industry}" companies',
+            f'global "{industry}" companies official websites',
+        ]
+
+        async def collect(queries: list[str], region: str, limit: int) -> str:
+            results = await asyncio.gather(
+                *(
+                    self.robust_search(
+                        query,
+                        max_results=7,
+                        retries=2,
+                        region=region,
+                    )
+                    for query in queries
+                )
+            )
+            usable = [
+                result for result in results
+                if result and "No verified external search data" not in result
+            ]
+            return "\n\n".join(usable)[:limit]
+
+        target_data, local_data, global_data = await asyncio.gather(
+            collect(target_queries, "in-en", 18000),
+            collect(local_queries, "in-en", 28000),
+            collect(global_queries, "us-en", 24000),
         )
 
         prompt = f"""
-You are a Senior SEO and Digital Visibility Analyst.
+You are GrowthPilot AI's Deep Digital Visibility Research Engine.
 
-TARGET BUSINESS
+Research the target business at THREE levels:
+1. Exact target business.
+2. Very local businesses, including small, poorly recognized businesses.
+3. Global market leaders in the same industry.
+
+TARGET
+======
 Name: {name}
 Website: {website or "Not provided"}
 Industry: {industry}
 Location: {location}
 
-SEARCH DATA
+TARGET LIVE SEARCH EVIDENCE
+===========================
+{target_data}
 
-TARGET:
-{target_search[:8000]}
+LOCAL MARKET LIVE SEARCH EVIDENCE
+==================================
+{local_data}
 
-LOCAL BUSINESSES:
-{local_search[:8000]}
+GLOBAL MARKET LIVE SEARCH EVIDENCE
+===================================
+{global_data}
 
-MARKET LEADERS:
-{market_search[:8000]}
+RESEARCH RULES
+==============
+1. Use ONLY the supplied live search evidence.
+2. NEVER invent a company, competitor, leader, score, review or fact.
+3. Directory sources such as Justdial, Sulekha and IndiaMART can be used
+   to DISCOVER small local businesses. They are evidence sources, not
+   automatically competitors.
+4. Do not require a local company to be famous or nationally recognized.
+5. If a small company is identifiable but has limited online evidence,
+   keep it and mark its evidence level LOW instead of dropping it.
+6. Local competitors must be geographically relevant to {location}.
+7. Global leaders must be genuinely international/relevant to {industry}.
+8. Keep local competitors and global leaders in separate lists.
+9. Scores are evidence-based ESTIMATES from 0 to 100, not audited market share.
+10. If evidence is insufficient, say so instead of filling the list with guesses.
+11. Return ONLY valid JSON.
 
-RULES
-1. Use only supplied search evidence.
-2. Do not invent companies.
-3. Identify up to 5 real local competitors and up to 5 relevant market leaders.
-4. Scores are evidence-based estimates from 0 to 100.
-5. Return ONLY valid JSON.
-
-Return:
+OUTPUT
+======
 {{
-  "target": {{"name": "{name}", "score": 0}},
-  "local_competitors": [{{"name": "Competitor", "score": 0}}],
-  "market_leaders": [{{"name": "Market Leader", "score": 0}}],
-  "insight_summary": "Two sentence evidence-based summary."
+  "target": {{
+    "name": "{name}",
+    "score": 0,
+    "evidence_level": "High, Medium, Low, or None"
+  }},
+  "local_competitors": [
+    {{
+      "name": "Real local business",
+      "score": 0,
+      "evidence": "Short evidence-based explanation",
+      "evidence_level": "High, Medium, or Low"
+    }}
+  ],
+  "market_leaders": [
+    {{
+      "name": "Real global market leader",
+      "score": 0,
+      "evidence": "Short evidence-based explanation",
+      "evidence_level": "High, Medium, or Low"
+    }}
+  ],
+  "insight_summary": "Two or three sentences explaining local and global visibility.",
+  "research_coverage": {{
+    "target_queries_run": {len(target_queries)},
+    "local_queries_run": {len(local_queries)},
+    "global_queries_run": {len(global_queries)},
+    "local_research": "Live multi-query regional search",
+    "global_research": "Live multi-query global search"
+  }}
 }}
-"""
 
-        return await self.generate_json(prompt, temperature=0.3)
+Aim for up to 5 local competitors and up to 5 global leaders, but NEVER
+invent names just to fill slots.
+"""
+        print("[VISIBILITY] Sending deep local + global evidence to Groq...")
+        return await self.generate_json(prompt, temperature=0.2)
 
 
 try:
