@@ -10,7 +10,7 @@ from groq import AsyncGroq
 from dotenv import load_dotenv
 from ddgs import DDGS
 
-from research_utils import summarize_fallback
+from research_utils import summarize_fallback, rank_candidates, target_evidence
 
 load_dotenv()
 
