@@ -680,24 +680,24 @@ STRICT ACCURACY RULES
 11. Return ONLY valid JSON.
 
 Return this schema:
-{
-  "target": {
+{{
+  "target": {{
     "name": "TARGET_NAME",
     "score": 0,
     "evidence_level": "High, Medium, Low, or None",
     "evidence_summary": "Verified live-search evidence"
-  },
+  }},
   "local_competitors": [],
   "market_leaders": [],
   "insight_summary": "Evidence-based summary only",
-  "research_coverage": {
+  "research_coverage": {{
     "status": "live_evidence",
     "provider": "DDGS",
     "target": "researched",
     "local": "researched",
     "global": "researched"
-  }
-}
+  }}
+}}
 
 Each competitor object must contain name, score, evidence_level, evidence_summary and sources.
 Maximum 5 local and 5 global companies. Never fill a slot with an unsupported company.
