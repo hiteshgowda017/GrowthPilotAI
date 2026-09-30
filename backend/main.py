@@ -159,7 +159,7 @@ class GrowthPilotEngine:
                 include_reasoning=False,
                 response_format={"type": "json_object"},
                 temperature=temperature,
-                max_completion_tokens=5000,
+                max_completion_tokens=6500,
             )
 
             content = response.choices[0].message.content
@@ -292,79 +292,265 @@ class GrowthPilotEngine:
         global_candidates = rank_candidates(global_data, industry, location, "global", name, 8)
         target_info = target_evidence(target_data, name, industry, location)
 
+        # One synthesis call turns the verified live-search dossier into a
+        # detailed competitor intelligence report and an executable strategy.
         prompt = f"""
-You are GrowthPilot's senior market-intelligence analyst.
+You are GrowthPilot's senior competitive-intelligence and strategy analyst.
 
-BUSINESS
+Your job is NOT to write a generic business plan. Build a research-backed
+competitive intelligence dossier for the exact business entered by the user.
+
+========================
+INPUT BUSINESS
+========================
 Name: {name}
 Website: {website or "Not provided"}
 Industry: {industry}
 Location: {location}
-Goal: {goal}
+Business Goal: {goal}
 
-LIVE VERIFIED SEARCH EVIDENCE
-=============================
-TARGET:
-{target_data[:14000]}
+========================
+RESEARCH METHOD
+========================
+Live search was performed with DDGS. Deterministic filters were applied before
+this prompt to remove obvious non-business/noise results and to check industry,
+location and target-name relevance.
 
-REVIEWS:
-{review_data[:10000]}
+Treat the supplied evidence as the source of truth.
+Do NOT use your own general knowledge to fill missing facts.
 
-LOCAL COMPETITOR EVIDENCE:
-{local_data[:16000]}
-
-GLOBAL MARKET EVIDENCE:
-{global_data[:14000]}
-
-DETERMINISTIC FILTERED CANDIDATES
-==================================
-Target:
+========================
+TARGET BUSINESS EVIDENCE
+========================
 {json.dumps(target_info, indent=2)}
 
-Local:
+========================
+LOCAL COMPETITOR CANDIDATES
+========================
 {json.dumps(local_candidates, indent=2)}
 
-Global:
+========================
+GLOBAL COMPETITOR CANDIDATES
+========================
 {json.dumps(global_candidates, indent=2)}
 
-ACCURACY CONTRACT
-=================
-- Use ONLY the evidence above.
-- A local competitor must be relevant to {location}.
-- A global company must genuinely operate in {industry}.
-- Reject entertainment, films, books, people and unrelated acronym meanings.
-- Never invent competitors, services, weaknesses, customers or rankings.
-- Treat scores as estimates, never audited market share.
-- Recommendations must be tied to an observed evidence signal.
-- Do not recommend new countries/markets without supporting evidence.
-- If something cannot be verified, say so.
-- Return ONLY valid JSON.
+========================
+RAW LIVE TARGET EVIDENCE
+========================
+{target_data[:9000]}
 
-REPORT QUALITY
-==============
-Answer:
-1. What was actually verified about the business?
-2. Who are the most relevant local competitors and why?
-3. Which global companies are genuinely relevant?
-4. What observable digital/market gaps exist?
-5. What should happen next and what evidence supports it?
-6. What remains unknown?
+========================
+RAW LIVE REVIEW EVIDENCE
+========================
+{review_data[:6000]}
 
-Avoid generic filler such as "leverage AI", "expand globally", "use social media",
-or "improve SEO" unless a supplied signal gives a specific reason.
+========================
+RAW LIVE LOCAL EVIDENCE
+========================
+{local_data[:11000]}
 
-Return exactly:
+========================
+RAW LIVE GLOBAL EVIDENCE
+========================
+{global_data[:9000]}
+
+================================================
+NON-NEGOTIABLE ACCURACY CONTRACT
+================================================
+1. The target business is "{name}". Never replace it with an industry category.
+2. A competitor must be a real business/company, not a topic, definition,
+   movie, book, person, article, generic directory category or acronym meaning.
+3. A local competitor must have evidence connecting the business to {location}
+   or the immediate local market AND evidence that it offers {industry}.
+4. A global competitor must have evidence that it is a real company and relevant
+   to {industry}. "Top company" search-result wording alone is not enough.
+5. Never treat Wikipedia/YouTube/IMDb/Britannica/Microsoft generic definition
+   pages as competitors.
+6. Search snippets are leads, not proof. Prefer official company pages and
+   reputable business profiles when available.
+7. Directory listings may establish that a business exists, but do not claim
+   quality, market share, revenue, leadership or superiority from a directory.
+8. Never invent services, clients, prices, locations, weaknesses, rankings,
+   market share, reviews or business strategies.
+9. If evidence is insufficient, explicitly say "Not verified" or "Insufficient
+   evidence" instead of guessing.
+10. Never recommend a new country, market or customer segment unless the supplied
+    evidence gives a concrete reason for it.
+11. Scores are evidence-based estimates of DIGITAL VISIBILITY, not audited
+    market share or business quality.
+12. Do not rank a company as "number 1" unless the supplied evidence genuinely
+    supports a defensible ranking. Otherwise say "Relative position not verified."
+13. Prefer 2-5 highly relevant competitors over 10 weak matches.
+14. Every competitor profile must explain WHY it was included and list its
+    supporting source URLs from the supplied evidence.
+15. Recommendations must map to a specific finding in this dossier.
+
+================================================
+REPORT OBJECTIVE
+================================================
+Produce a report that a founder/manager could actually use to understand:
+- what the target business is doing online,
+- who is genuinely competing for the same customers,
+- how each relevant competitor is positioned,
+- where the target appears exposed,
+- what opportunities are supported by evidence,
+- and exactly what to execute over the next 180 days.
+
+The report must distinguish:
+VERIFIED FINDING / RESEARCH INFERENCE / UNKNOWN.
+
+Do not pad the report with generic marketing advice.
+
+================================================
+REQUIRED REPORT STRUCTURE
+================================================
+Write detailed Markdown using EXACTLY these phases:
+
+# GrowthPilot Competitive Intelligence & Strategic Growth Report
+
+## Phase I: Executive Intelligence Brief
+Include:
+- Target business
+- Research date/context
+- Evidence coverage
+- 5-8 key findings
+- 3 most important strategic implications
+- Clear list of what could NOT be verified
+
+## Phase II: Target Business Digital & Market Audit
+Create a compact table:
+Area | Verified Evidence | Signal | Confidence
+Cover:
+- website/official presence
+- service/product positioning
+- local discoverability
+- social/professional presence
+- reviews/reputation where evidence exists
+- search visibility
+- market positioning
+Do not invent missing metrics.
+
+## Phase III: Local Competitor Intelligence
+For EACH verified local competitor:
+### [Competitor Name]
+Include:
+- Why it qualifies as a competitor
+- Location evidence
+- Industry/service evidence
+- Digital visibility evidence
+- Positioning observed from sources
+- Observable strength
+- Observable weakness/gap (only if supported)
+- Threat/opportunity relevance to the target
+- Source URLs
+
+Then provide a comparison table:
+Competitor | Local relevance | Service overlap | Digital signal | Evidence confidence | Strategic implication
+
+## Phase IV: Global / Macro Competitor Intelligence
+Use the same structure for genuinely relevant international companies.
+Do NOT confuse "large company" with "competitor".
+Explain whether each is a direct competitor, adjacent competitor, or market benchmark.
+
+Then provide:
+Company | Relevance type | Evidence | Digital signal | Strategic lesson
+
+## Phase V: Competitive Positioning & Gap Analysis
+Build a finding matrix:
+Finding | Target evidence | Competitor evidence | Gap | Confidence
+Separate:
+- Verified gaps
+- Probable opportunities
+- Unknowns requiring validation
+
+## Phase VI: Digital Visibility Strategy
+Give specific actions based on observed evidence for:
+- website/search discoverability
+- local visibility
+- professional/social presence
+- content authority
+- reviews/reputation
+- AI/search discoverability
+Do NOT say merely "improve SEO" or "use AI". Specify what should be changed and why.
+
+## Phase VII: Strategic Growth Opportunities
+Provide 5-7 opportunities maximum.
+For each:
+Opportunity | Evidence | Why now | Expected business effect | Effort | Priority
+Do not invent financial forecasts.
+
+## Phase VIII: 30 / 60 / 90 / 180-Day Execution Plan
+Create a practical roadmap.
+
+0-30 days:
+- exact actions
+- owner/role
+- output
+- KPI
+
+31-60 days:
+- exact actions
+- owner/role
+- output
+- KPI
+
+61-90 days:
+- exact actions
+- owner/role
+- output
+- KPI
+
+91-180 days:
+- exact actions
+- owner/role
+- output
+- KPI
+
+Only use actions justified by the evidence. Mark validation-dependent actions clearly.
+
+## Phase IX: Measurement Framework
+Define 8-12 measurable KPIs.
+For each:
+KPI | Baseline | Target direction | Measurement method | Review frequency
+
+If baseline is unavailable, write "Baseline required" rather than inventing a number.
+
+## Phase X: Risks, Unknowns & Next Research
+List:
+- evidence gaps
+- assumptions
+- risks
+- exact searches/data that should be performed next
+- what could change the strategy
+
+## Phase XI: Executive Action List
+Finish with the 10 highest-value actions in execution order.
+Each action must reference the finding that justifies it.
+
+================================================
+METRICS
+================================================
+Return metrics separately:
+- market_rank: use "Relative position not verified" unless defensible evidence exists
+- ai_visibility_score: 0-100 estimate from observable search/AI visibility evidence
+- vulnerability_score: 0-100 estimate from verified competitive gaps
+- top_opportunity: one concise evidence-backed opportunity
+
+================================================
+JSON OUTPUT
+================================================
+Return ONLY valid JSON in this exact shape:
 {{
   "metrics": {{
-    "market_rank": "Not enough verified data unless a defensible comparison exists",
-    "ai_visibility_score": "0-100 estimate based on observable search visibility",
-    "vulnerability_score": "0-100 estimate based on verified competitive gaps",
-    "top_opportunity": "One evidence-backed opportunity, or Insufficient verified evidence"
+    "market_rank": "Relative position not verified",
+    "ai_visibility_score": 0,
+    "vulnerability_score": 0,
+    "top_opportunity": "Insufficient verified evidence"
   }},
-  "report_markdown": "# GrowthPilot Executive Intelligence Report\n\n## Phase I: Verified Business Audit\nConcrete verified facts and evidence coverage.\n\n## Phase II: Relevant Competitive Landscape\nLocal competitors first, then genuinely relevant global companies. Explain why each belongs.\n\n## Phase III: Evidence-Based Gaps\nOnly gaps supported by the supplied evidence. Separate verified gaps from unknowns.\n\n## Phase IV: Growth Opportunities\nPrioritized opportunities tied directly to observed evidence.\n\n## Phase V: Digital & AI Visibility\nSpecific discoverability observations and actions, not generic AI advice.\n\n## Phase VI: 30/90/180-Day Roadmap\nConcrete actions with a reason and measurable signal for each.\n\n## Phase VII: Risks, Unknowns & Validation\nWhat cannot be verified and what GrowthPilot should research next.\n\n## Phase VIII: Executive Action Plan\nA concise numbered plan based only on verified findings."
-  }}
+  "report_markdown": "FULL DETAILED REPORT IN MARKDOWN"
 }}
 """
+
         print("[PHASE 4] Sending filtered live research to Groq...")
         try:
             return await self.generate_json(prompt, temperature=0.05)
