@@ -30,7 +30,7 @@ class AnalysisRequest(BaseModel):
 class GrowthPilotEngine:
     def __init__(self):
         self.client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
-        self.model = "llama-3.3-70b-versatile"
+        self.model = "openai/gpt-oss-20b"
     async def robust_search(self, query: str, max_results: int = 3, retries: int = 3) -> str:
         """Universal scraper with retries to ensure real data is pulled."""
         for attempt in range(retries):
