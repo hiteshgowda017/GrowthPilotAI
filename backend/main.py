@@ -164,7 +164,7 @@ class GrowthPilotEngine:
                 include_reasoning=False,
                 response_format={"type": "json_object"},
                 temperature=temperature,
-                max_completion_tokens=6500,
+                max_completion_tokens=2800,
             )
 
             content = response.choices[0].message.content
@@ -195,9 +195,9 @@ class GrowthPilotEngine:
                 # because ALLaM has a 4K context window.
                 try:
                     compact_prompt = prompt
-                    if len(compact_prompt) > 10500:
+                    if len(compact_prompt) > 7000:
                         compact_prompt = (
-                            compact_prompt[:10500]
+                            compact_prompt[:7000]
                             + "\n\nIMPORTANT: Use only the evidence above; "
                             "do not invent omitted details."
                         )
@@ -219,7 +219,7 @@ class GrowthPilotEngine:
                             {"role": "user", "content": compact_prompt},
                         ],
                         response_format={"type": "json_object"},
-                        max_completion_tokens=3000,
+                        max_completion_tokens=1600,
                     )
                     fallback_content = fallback_response.choices[0].message.content
                     if fallback_content:
@@ -347,6 +347,15 @@ class GrowthPilotEngine:
         )
         target_info = target_evidence(target_data, name, industry, location, domain)
 
+        # Keep the synthesis request below the free Groq 8K TPM limit.
+        # DDGS can return a large dossier, so send compact evidence excerpts
+        # rather than the full raw search corpus. The full research is still
+        # used by the deterministic verification layer before synthesis.
+        target_excerpt = target_data[:2500]
+        review_excerpt = review_data[:1500]
+        local_excerpt = local_data[:3500]
+        global_excerpt = global_data[:2500]
+
         # One synthesis call turns the verified live-search dossier into a
         # detailed competitor intelligence report and an executable strategy.
         prompt = f"""
@@ -392,22 +401,22 @@ GLOBAL COMPETITOR CANDIDATES
 ========================
 RAW LIVE TARGET EVIDENCE
 ========================
-{target_data[:9000]}
+{target_excerpt}
 
 ========================
 RAW LIVE REVIEW EVIDENCE
 ========================
-{review_data[:6000]}
+{review_excerpt}
 
 ========================
 RAW LIVE LOCAL EVIDENCE
 ========================
-{local_data[:11000]}
+{local_excerpt}
 
 ========================
 RAW LIVE GLOBAL EVIDENCE
 ========================
-{global_data[:9000]}
+{global_excerpt}
 
 ================================================
 NON-NEGOTIABLE ACCURACY CONTRACT
