@@ -75,14 +75,18 @@ class GrowthPilotEngine:
                 print(f"[SEARCH] region={region} query={query}")
 
                 def do_search():
-                    with DDGS() as search:
+                    # Render's network can intermittently time out on DDGS
+                    # auto-selection (notably Mojeek/HTML DuckDuckGo). Keep
+                    # DDGS as the live search engine, but use an explicit,
+                    # resilient provider order and a longer HTTP timeout.
+                    with DDGS(timeout=10) as search:
                         return list(
                             search.text(
                                 query,
                                 region=region,
                                 safesearch="moderate",
                                 max_results=max_results,
-                                backend="auto",
+                                backend="bing,brave,duckduckgo,google,yahoo",
                             )
                         )
 
