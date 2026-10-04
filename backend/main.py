@@ -48,7 +48,7 @@ class GrowthPilotEngine:
             )
 
         self.client = AsyncGroq(api_key=api_key)
-        self.model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
+        self.model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
         # Browser Search is explicitly supported by GPT-OSS models.
         self.browser_model = os.getenv("GROQ_BROWSER_MODEL", "openai/gpt-oss-20b")
         # Disabled by default so DDGS remains the dependable live-research
