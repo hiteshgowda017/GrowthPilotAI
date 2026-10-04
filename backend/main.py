@@ -49,6 +49,10 @@ class GrowthPilotEngine:
 
         self.client = AsyncGroq(api_key=api_key)
         self.model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+        # ALLaM-2-7B has a larger free TPD quota (500K) than GPT-OSS (200K).
+        # It is kept as a rate-limit fallback only because its 4K context is
+        # much smaller and it is less suitable for the full GrowthPilot report.
+        self.fallback_model = os.getenv("GROQ_FALLBACK_MODEL", "allam-2-7b")
         # Browser Search is explicitly supported by GPT-OSS models.
         self.browser_model = os.getenv("GROQ_BROWSER_MODEL", "openai/gpt-oss-20b")
         # Disabled by default so DDGS remains the dependable live-research
@@ -185,13 +189,59 @@ class GrowthPilotEngine:
             message = str(exc)
             print(f"[GROQ ERROR] {type(exc).__name__}: {message}")
 
-            # Preserve 429 so the visibility audit can fall back to its
-            # live DDGS evidence instead of failing the entire request.
             if "429" in message or "rate_limit_exceeded" in message.lower():
+                # Try the higher-quota ALLaM model before falling back to
+                # evidence-only output. Keep the fallback prompt compact
+                # because ALLaM has a 4K context window.
+                try:
+                    compact_prompt = prompt
+                    if len(compact_prompt) > 10500:
+                        compact_prompt = (
+                            compact_prompt[:10500]
+                            + "\n\nIMPORTANT: Use only the evidence above; "
+                            "do not invent omitted details."
+                        )
+                    print(
+                        f"[GROQ FALLBACK] Primary rate-limited; "
+                        f"trying {self.fallback_model}"
+                    )
+                    fallback_response = await self.client.chat.completions.create(
+                        model=self.fallback_model,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": (
+                                    "You are GrowthPilot AI fallback analyst. "
+                                    "Return only valid JSON. Use only supplied "
+                                    "live evidence and never invent facts."
+                                ),
+                            },
+                            {"role": "user", "content": compact_prompt},
+                        ],
+                        response_format={"type": "json_object"},
+                        max_completion_tokens=3000,
+                    )
+                    fallback_content = fallback_response.choices[0].message.content
+                    if fallback_content:
+                        fallback_data = json.loads(fallback_content)
+                        if isinstance(fallback_data, dict):
+                            print(
+                                f"[GROQ FALLBACK] {self.fallback_model} succeeded."
+                            )
+                            return fallback_data
+                except Exception as fallback_exc:
+                    print(
+                        f"[GROQ FALLBACK ERROR] "
+                        f"{type(fallback_exc).__name__}: {fallback_exc}"
+                    )
+
+                # Preserve 429 if both models are unavailable so the visibility
+                # audit can safely return live DDGS evidence instead of fabricating AI output.
                 raise HTTPException(
                     status_code=429,
                     detail=(
-                        "Groq rate limit reached. GrowthPilot is using "
+                        "Primary Groq model was rate-limited and the higher-quota "
+                        "fallback model was unavailable. GrowthPilot is using "
                         "the live DDGS research fallback for this audit."
                     ),
                 )
