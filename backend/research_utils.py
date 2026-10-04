@@ -80,6 +80,8 @@ def candidate_name(title: str, href: str) -> str:
     value = re.sub(r"\s*[-–—]\s*(Justdial|Sulekha|IndiaMART|Facebook|Instagram|LinkedIn|YouTube|IMDb|Wikipedia).*?$", "", value, flags=re.I)
     value = value.strip(' -|:')
     low = value.lower()
+
+    # Never turn a generic article/category title into a competitor.
     if not value or any(low.startswith(prefix) for prefix in GENERIC_TITLE_PREFIXES):
         try:
             host = urlparse(href).netloc.lower().replace("www.", "")
@@ -88,6 +90,18 @@ def candidate_name(title: str, href: str) -> str:
             return host.split('.')[0].replace('-', ' ').strip()
         except Exception:
             return ''
+
+    # Reject obvious generic/non-company titles even when the URL itself is
+    # not a blocked domain.
+    generic = {
+        "software", "application software", "information technology",
+        "information technology services", "it services", "technology",
+        "computer software", "software company", "companies", "businesses",
+        "home", "services", "solutions", "about us", "contact us",
+    }
+    if low in generic:
+        return ''
+
     return value[:120]
 
 def _match_score(item: dict, industry: str, location: str, role: str, target_name: str = '') -> int:
@@ -112,7 +126,9 @@ def _match_score(item: dict, industry: str, location: str, role: str, target_nam
         strong_terms = {
             "information technology", "it services", "software",
             "software development", "technology", "technology consulting",
-            "cloud", "cybersecurity", "managed services",
+            "cloud", "cybersecurity", "managed services", "saas",
+            "app development", "web development", "digital transformation",
+            "erp", "crm", "data analytics", "artificial intelligence",
         }
         strong_title = sum(1 for term in strong_terms if term in title)
         strong_body = sum(1 for term in strong_terms if term in body)
@@ -121,6 +137,21 @@ def _match_score(item: dict, industry: str, location: str, role: str, target_nam
 
     score += min(industry_hits * 25, 50)
     score += min(industry_body_hits * 8, 24)
+
+    # Prefer pages that look like an actual company presence rather than
+    # generic knowledge pages. This is still evidence scoring, not a claim
+    # about company quality.
+    host = urlparse(item.get("href", "")).netloc.lower().replace("www.", "")
+    title_has_company_signal = any(
+        token in title for token in ("pvt", "private", "ltd", "limited", "technologies",
+                                     "technology", "solutions", "systems", "labs",
+                                     "software", "digital", "consulting", "services",
+                                     "inc", "llc", "corp", "group")
+    )
+    if host and not any(d in host for d in DIRECTORY_DOMAINS):
+        score += 12
+    if title_has_company_signal:
+        score += 8
     if role == 'local':
         score += min(location_hits * 25, 50)
         score += min(location_body_hits * 8, 24)
