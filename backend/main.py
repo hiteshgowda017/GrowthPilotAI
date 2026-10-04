@@ -14,9 +14,9 @@ from ddgs import DDGS
 # 1) Root Directory = backend -> "uvicorn main:app"
 # 2) Repository root -> "uvicorn backend.main:app"
 try:
-    from .research_utils import summarize_fallback, rank_candidates, target_evidence
+    from .research_utils import summarize_fallback, rank_candidates, target_evidence, candidate_verification
 except ImportError:
-    from research_utils import summarize_fallback, rank_candidates, target_evidence
+    from research_utils import summarize_fallback, rank_candidates, target_evidence, candidate_verification
 
 load_dotenv()
 
@@ -576,6 +576,73 @@ Return ONLY valid JSON in this exact shape:
                     )
                 }
             raise
+    async def verify_competitor_candidates(
+        self,
+        candidates: list[dict],
+        industry: str,
+        location: str,
+        role: str,
+        target_name: str,
+    ) -> list[dict]:
+        """Re-search each candidate by exact entity name before exposing it."""
+        semaphore = asyncio.Semaphore(3)
+
+        async def verify_one(candidate: dict) -> dict | None:
+            candidate_name = str(candidate.get("name", "")).strip()
+            if not candidate_name:
+                return None
+
+            # Each candidate gets independent, exact-name verification. The
+            # discovery query is never treated as proof by itself.
+            if role == "local":
+                queries = [
+                    f'"{candidate_name}" "{location}" "{industry}"',
+                    f'"{candidate_name}" "{location}" official',
+                    f'"{candidate_name}" "{industry}" services "{location}"',
+                ]
+            else:
+                queries = [
+                    f'"{candidate_name}" "{industry}"',
+                    f'"{candidate_name}" official',
+                    f'"{candidate_name}" "{industry}" services',
+                ]
+
+            async with semaphore:
+                raw_parts = []
+                for query in queries:
+                    result = await self.robust_search(
+                        query, max_results=5, retries=1,
+                        region="in-en" if role == "local" else "wt-wt"
+                    )
+                    if result:
+                        raw_parts.append(result)
+
+            raw = "\n\n".join(raw_parts)
+            verified = candidate_verification(
+                raw,
+                candidate_name,
+                industry,
+                location,
+                role,
+                target_name,
+            )
+            if not verified:
+                print(f"[VERIFY] Rejected {role} candidate: {candidate_name}")
+                return None
+
+            # Preserve the original discovery score as context but make the
+            # verification score the displayed evidence score.
+            return {
+                **candidate,
+                **verified,
+                "score": verified["verification_score"],
+                "evidence_summary": verified["evidence_summary"],
+                "sources": verified["sources"],
+            }
+
+        verified = await asyncio.gather(*(verify_one(c) for c in candidates[:6]))
+        return [x for x in verified if x is not None][:5]
+
     async def run_visibility_audit(
         self,
         name: str,
@@ -646,6 +713,25 @@ Return ONLY valid JSON in this exact shape:
             name, industry, location, target_raw, local_raw, global_raw
         )
 
+        verified_local = await self.verify_competitor_candidates(
+            fallback.get("local_competitors", []),
+            industry,
+            location,
+            "local",
+            name,
+        )
+        verified_global = await self.verify_competitor_candidates(
+            fallback.get("market_leaders", []),
+            industry,
+            location,
+            "global",
+            name,
+        )
+        fallback["local_competitors"] = verified_local
+        fallback["market_leaders"] = verified_global
+        fallback["research_coverage"]["local_candidates"] = len(verified_local)
+        fallback["research_coverage"]["global_candidates"] = len(verified_global)
+
         live_evidence = (
             f"TARGET DDGS:\n{target_raw}\n\n"
             f"LOCAL DDGS:\n{local_raw}\n\n"
@@ -675,12 +761,14 @@ LIVE DDGS EVIDENCE
 
 STRICT ENTITY VERIFICATION
 ==========================
-A LOCAL competitor is valid only if the supplied evidence supports:
+A LOCAL competitor is valid only if BOTH the discovery evidence
+AND the fresh exact-name verification evidence support:
 1. a real operating company/business,
 2. meaningful service/product overlap with "{industry}",
 3. a connection to "{location}" or its immediate local market.
 
-A GLOBAL competitor is valid only if the supplied evidence supports:
+A GLOBAL competitor is valid only if BOTH the discovery evidence
+AND the fresh exact-name verification evidence support:
 1. a real operating company,
 2. meaningful relevance to "{industry}",
 3. a credible relationship to the target's market:
