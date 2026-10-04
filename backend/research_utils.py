@@ -204,8 +204,13 @@ def rank_candidates(raw: str, industry: str, location: str, role: str, target_na
     ordered = sorted(dedup.values(), key=lambda x: (x['score'], len(x['sources'])), reverse=True)
     output = []
     for row in ordered[:limit]:
-        evidence_score = min(100, row['score'])
-        level = 'High' if evidence_score >= 80 else 'Medium' if evidence_score >= 55 else 'Low'
+        evidence_score = min(
+            100,
+            max(20, row['score']) +
+            min(20, len(row['sources']) * 4) +
+            min(12, len(row['snippets']) * 2)
+        )
+        level = 'High' if evidence_score >= 75 else 'Medium' if evidence_score >= 45 else 'Low'
         output.append({
             'name': row['name'],
             'score': evidence_score,
@@ -215,6 +220,50 @@ def rank_candidates(raw: str, industry: str, location: str, role: str, target_na
         })
     return output
 
+
+def _entity_tokens(name: str) -> list[str]:
+    return [t for t in _tokens(name) if len(t) >= 3]
+
+
+def evidence_visibility_score(items: list[dict], name: str, official_domain: str = "") -> int:
+    """Score observable live-web visibility; never represents market share."""
+    target = _norm(name)
+    tokens = _entity_tokens(name)
+    if not target and not tokens:
+        return 0
+
+    matched = []
+    for item in items:
+        corpus = _norm(" ".join([
+            item.get("title", ""), item.get("body", ""), item.get("href", "")
+        ]))
+        exact = target in corpus if target else False
+        token_hits = sum(1 for token in tokens if token in corpus)
+        if exact or (tokens and token_hits >= max(1, len(tokens) // 2)):
+            matched.append(item)
+
+    if not matched:
+        return 0
+
+    unique_sources = {
+        urlparse(x.get("href", "")).netloc.lower().replace("www.", "")
+        for x in matched if x.get("href")
+    }
+    unique_queries = {
+        _norm(x.get("query", "")) for x in matched if _norm(x.get("query", ""))
+    }
+
+    score = 20
+    score += min(30, len(matched) * 3)
+    score += min(20, len(unique_sources) * 4)
+    score += min(20, len(unique_queries) * 4)
+
+    domain = _norm(official_domain).replace("https://", "").replace("http://", "").strip("/")
+    if domain and any(domain in _norm(x.get("href", "")) for x in matched):
+        score += 10
+
+    return min(100, score)
+
 def target_evidence(raw: str, name: str, industry: str, location: str) -> dict:
     items = parse_search_results(raw)
     relevant = [x for x in items if _match_score(x, industry, location, 'target', name) >= 35]
@@ -222,8 +271,8 @@ def target_evidence(raw: str, name: str, industry: str, location: str) -> dict:
     for item in relevant:
         if item.get('href') and item['href'] not in sources:
             sources.append(item['href'])
-    score = min(100, 25 + len(sources) * 10)
-    level = 'High' if len(sources) >= 5 else 'Medium' if len(sources) >= 2 else 'Low' if sources else 'None'
+    score = evidence_visibility_score(items, name)
+    level = 'High' if score >= 75 else 'Medium' if score >= 45 else 'Low' if score > 0 else 'None'
     return {
         'name': name,
         'score': score,
