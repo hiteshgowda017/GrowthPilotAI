@@ -65,11 +65,11 @@ class CompetitorIntelligenceAgent:
             return {
                 "name": competitor_name,
                 "type": "Unknown",
-                "usp": "Data retrieval failed.",
-                "strengths": "Pending",
-                "weaknesses": "Pending",
-                "marketing_presence": "Pending",
-                "threat_score": 50
+                "usp": "Not verified",
+                "strengths": "Not verified",
+                "weaknesses": "Not verified",
+                "marketing_presence": "Evidence unavailable",
+                "threat_score": 0
             }
 
     async def profile_competitors(self, competitors: list, target_biz: dict):
