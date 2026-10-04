@@ -72,6 +72,10 @@ class GrowthPilotEngine:
             ).split(",")
             if item.strip()
         ]
+        # Keep live DDGS traffic bounded on Render. Without a global limit,
+        # the target/local/global research batches plus verification can open
+        # many outbound requests at once and trigger upstream timeouts.
+        self.search_semaphore = asyncio.Semaphore(4)
 
     async def robust_search(
         self,
@@ -81,62 +85,63 @@ class GrowthPilotEngine:
         region: str = "in-en",
     ) -> str:
         """Run one resilient DDGS search with per-engine failover."""
-        for backend in self.search_backends:
-            for attempt in range(1, retries + 1):
-                try:
-                    print(
-                        f"[SEARCH] backend={backend} region={region} "
-                        f"query={query}"
-                    )
+        async with self.search_semaphore:
+            for backend in self.search_backends:
+                for attempt in range(1, retries + 1):
+                    try:
+                        print(
+                            f"[SEARCH] backend={backend} region={region} "
+                            f"query={query}"
+                        )
 
-                    def do_search():
-                        with DDGS(timeout=7) as search:
-                            return list(
-                                search.text(
-                                    query,
-                                    region=region,
-                                    safesearch="moderate",
-                                    max_results=max_results,
-                                    backend=backend,
+                        def do_search():
+                            with DDGS(timeout=7) as search:
+                                return list(
+                                    search.text(
+                                        query,
+                                        region=region,
+                                        safesearch="moderate",
+                                        max_results=max_results,
+                                        backend=backend,
+                                    )
                                 )
+
+                        # Bound the whole worker call as well as DDGS's HTTP
+                        # timeout so one provider cannot stall the analysis.
+                        results = await asyncio.wait_for(
+                            asyncio.to_thread(do_search),
+                            timeout=9,
+                        )
+
+                        if results:
+                            print(
+                                f"[SEARCH SUCCESS] backend={backend} "
+                                f"results={len(results)} query={query}"
+                            )
+                            return "\n".join(
+                                f"SEARCH QUERY: {query}\n"
+                                f"- {r.get('title', '')}\n"
+                                f"  {r.get('body', '')}\n"
+                                f"  Source: {r.get('href', '')}"
+                                for r in results
                             )
 
-                    # Bound the whole worker call as well as DDGS's HTTP
-                    # timeout so one provider cannot stall the analysis.
-                    results = await asyncio.wait_for(
-                        asyncio.to_thread(do_search),
-                        timeout=9,
-                    )
-
-                    if results:
                         print(
-                            f"[SEARCH SUCCESS] backend={backend} "
-                            f"results={len(results)} query={query}"
+                            f"[SEARCH EMPTY] backend={backend} query={query}"
                         )
-                        return "\n".join(
-                            f"SEARCH QUERY: {query}\n"
-                            f"- {r.get('title', '')}\n"
-                            f"  {r.get('body', '')}\n"
-                            f"  Source: {r.get('href', '')}"
-                            for r in results
+                        break
+
+                    except Exception as exc:
+                        print(
+                            f"[SEARCH WARNING] backend={backend} attempt={attempt} "
+                            f"query={query}: {type(exc).__name__}: {exc}"
                         )
 
-                    print(
-                        f"[SEARCH EMPTY] backend={backend} query={query}"
-                    )
-                    break
+                        if attempt < retries:
+                            await asyncio.sleep(0.5)
 
-                except Exception as exc:
-                    print(
-                        f"[SEARCH WARNING] backend={backend} attempt={attempt} "
-                        f"query={query}: {type(exc).__name__}: {exc}"
-                    )
-
-                    if attempt < retries:
-                        await asyncio.sleep(0.5)
-
-        print(f"[SEARCH FAILED] all DDGS backends exhausted for query={query}")
-        return ""
+            print(f"[SEARCH FAILED] all DDGS backends exhausted for query={query}")
+            return ""
 
     async def browser_research(self, prompt: str) -> str:
         """Run one Groq server-side browser research session."""
