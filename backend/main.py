@@ -86,6 +86,7 @@ class GrowthPilotEngine:
 
                 if results:
                     return "\n".join(
+                        f"SEARCH QUERY: {query}\n"
                         f"- {r.get('title', '')}\n"
                         f"  {r.get('body', '')}\n"
                         f"  Source: {r.get('href', '')}"
@@ -245,26 +246,24 @@ class GrowthPilotEngine:
         # Competitor research is anchored to the actual target and then
         # broadened to independent/local discovery.
         local_queries = [
-            f'"{name}" competitors "{location}"',
-            f'"{name}" alternatives "{location}"',
-            f'"{name}" similar companies "{location}"',
-            f'"{name}" competitors in "{location}"',
-            f'"{industry}" "{location}" independent company',
-            f'"{industry}" "{location}" local company',
-            f'"{industry}" near "{location}" company',
-            f'site:justdial.com "{industry}" "{location}"',
-            f'site:sulekha.com "{industry}" "{location}"',
-            f'site:indiamart.com "{industry}" "{location}"',
+            # Exact-business discovery comes first. Industry/location are constraints.
+            f'"{name}" "{location}" competitors',
+            f'"{name}" "{location}" alternatives',
+            f'"{name}" "{location}" similar companies',
+            f'"{name}" "{location}" competitors "{industry}"',
+            # Independent discovery remains tied to the same target context.
+            f'"{industry}" companies "{location}" "{name}"',
+            f'"{industry}" providers "{location}" "{name}"',
+            f'"{industry}" services "{location}" "{name}"',
         ]
 
         global_queries = [
-            f'"{name}" global competitors',
-            f'"{name}" international competitors',
-            f'"{name}" global alternatives',
-            f'"{name}" similar companies worldwide',
-            f'leading "{industry}" companies worldwide',
-            f'"{industry}" global companies',
-            f'"{industry}" multinational companies',
+            f'"{name}" global competitors "{industry}"',
+            f'"{name}" international competitors "{industry}"',
+            f'"{name}" global alternatives "{industry}"',
+            f'"{name}" similar companies worldwide "{industry}"',
+            f'"{industry}" companies similar to "{name}"',
+            f'"{industry}" global companies similar to "{name}"',
         ]
 
         review_queries = [
