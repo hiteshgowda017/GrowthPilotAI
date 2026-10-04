@@ -190,7 +190,7 @@ export default function VisibilityAudit({ searchParams }: AuditProps) {
                 : 'bg-zinc-900/50 text-zinc-500 hover:text-zinc-300 border border-zinc-800'
             }`}
           >
-            <Target className="w-4 h-4" /> Vs Local Independent Competitors
+            <Target className="w-4 h-4" /> Vs Local Competitors
           </button>
           
           <button
@@ -201,7 +201,7 @@ export default function VisibilityAudit({ searchParams }: AuditProps) {
                 : 'bg-zinc-900/50 text-zinc-500 hover:text-zinc-300 border border-zinc-800'
             }`}
           >
-            <Globe className="w-4 h-4" /> Vs Macro Market Leaders
+            <Globe className="w-4 h-4" /> Vs Top Global Competitors
           </button>
         </div>
 
@@ -219,6 +219,17 @@ export default function VisibilityAudit({ searchParams }: AuditProps) {
             <span className="text-[10px] uppercase tracking-widest text-zinc-600 font-mono">0–100</span>
           </div>
 
+          {chartData.length === 0 ? (
+            <div className="py-16 text-center border border-white/[0.05] rounded-xl bg-zinc-950/40">
+              <div className="text-zinc-400 text-sm font-semibold mb-2">
+                No verified {activeTab === 'local' ? 'local' : 'global'} competitors found
+              </div>
+              <div className="text-zinc-600 text-xs max-w-md mx-auto leading-relaxed">
+                GrowthPilot will not fabricate a competitor to fill the graph. Broader
+                live research or a more specific market input may be required.
+              </div>
+            </div>
+          ) : (
           <div className="space-y-6">
             {chartData.map((item, index) => {
               const isTarget = item.name === data.target.name;
@@ -254,8 +265,29 @@ export default function VisibilityAudit({ searchParams }: AuditProps) {
               );
             })}
           </div>
+          )}
         </div>
 
+        {chartData.length > 0 && (
+          <div className="mt-8 pt-6 border-t border-zinc-800/50">
+            <h4 className="text-[10px] uppercase tracking-widest text-zinc-500 font-mono mb-4">
+              Evidence Sources
+            </h4>
+            <div className="space-y-3">
+              {chartData.flatMap(item => (item.sources || []).map(source => ({ name: item.name, source }))).map((entry, i) => (
+                <a
+                  key={i}
+                  href={entry.source}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block text-[11px] text-zinc-500 hover:text-indigo-300 transition-colors break-all"
+                >
+                  {entry.name} — {entry.source}
+                </a>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </motion.div>
   );
