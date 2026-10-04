@@ -346,6 +346,23 @@ def candidate_verification(raw: str, candidate: str, industry: str, location: st
             if industry_hits == 0:
                 continue
 
+            # Global competitors must have some evidence of a competitive or
+            # market relationship, not merely contain the word "software".
+            relationship_terms = {
+                "competitor", "competitors", "alternative", "alternatives",
+                "rival", "rivals", "similar", "peer", "peers",
+                "service provider", "provider", "consulting", "it services",
+                "technology services", "digital transformation"
+            }
+            relationship_hits = sum(1 for term in relationship_terms if term in evidence)
+            query_text = _norm(item.get("query", ""))
+            query_relationship = any(
+                term in query_text
+                for term in ("competitor", "alternative", "similar", "rival")
+            )
+            if relationship_hits == 0 and not query_relationship:
+                continue
+
         matching.append(item)
 
     if not matching:
@@ -375,25 +392,93 @@ def candidate_verification(raw: str, candidate: str, industry: str, location: st
         "sources": source_urls[:5],
     }
 
-def target_evidence(raw: str, name: str, industry: str, location: str) -> dict:
+def target_evidence(raw: str, name: str, industry: str, location: str, official_domain: str = "") -> dict:
+    """Verify the target entity first; industry/location are supporting signals, not gates."""
     items = parse_search_results(raw)
-    relevant = [x for x in items if _match_score(x, industry, location, 'target', name) >= 35]
+    target_norm = _norm(name)
+    domain_norm = _norm(official_domain).replace("https://", "").replace("http://", "").strip("/")
+    industry_terms = expand_industry_terms(industry)
+    location_terms = expand_location_terms(location)
+
+    exact_items = []
+    for item in items:
+        if _is_noise(item):
+            continue
+        title = _norm(item.get("title", ""))
+        body = _norm(item.get("body", ""))
+        href = _norm(item.get("href", ""))
+        corpus = " ".join([title, body, href])
+        exact_name = bool(target_norm and target_norm in corpus)
+        domain_match = bool(domain_norm and domain_norm in href)
+        if exact_name or domain_match:
+            exact_items.append(item)
+
     sources = []
-    for item in relevant:
-        if item.get('href') and item['href'] not in sources:
-            sources.append(item['href'])
-    score = evidence_visibility_score(items, name)
+    for item in exact_items:
+        href = item.get("href", "")
+        if href and href not in sources:
+            sources.append(href)
+
+    unique_domains = {
+        urlparse(item.get("href", "")).netloc.lower().replace("www.", "")
+        for item in exact_items
+        if item.get("href")
+    }
+    unique_queries = {
+        _norm(item.get("query", ""))
+        for item in exact_items
+        if _norm(item.get("query", ""))
+    }
+
+    industry_hits = 0
+    location_hits = 0
+    for item in exact_items:
+        evidence = _norm(" ".join([
+            item.get("title", ""), item.get("body", ""), item.get("href", "")
+        ]))
+        industry_hits += sum(1 for term in industry_terms if term in evidence)
+        location_hits += sum(1 for term in location_terms if term in evidence)
+
+    # Entity visibility is based on exact target evidence, not on whether a
+    # snippet happens to contain the user's industry/location wording.
+    if not exact_items:
+        score = 0
+    else:
+        score = 20
+        score += min(30, len(exact_items) * 4)
+        score += min(20, len(unique_domains) * 5)
+        score += min(15, len(unique_queries) * 3)
+        if domain_norm and any(domain_norm in _norm(x.get("href", "")) for x in exact_items):
+            score += 15
+        elif industry_hits:
+            score += 5
+        if location_hits:
+            score += 5
+        score = min(100, score)
+
     level = 'High' if score >= 75 else 'Medium' if score >= 45 else 'Low' if score > 0 else 'None'
+    if exact_items:
+        summary = (
+            f'Exact-entity search found {len(exact_items)} target result(s) across '
+            f'{len(unique_domains)} source domain(s); industry/location signals are '
+            f'{"present" if industry_hits else "not consistently present"} in the evidence.'
+        )
+    else:
+        summary = (
+            'No reliable exact-entity result was returned by live search. '
+            'Target identity could not be verified from the current DDGS evidence.'
+        )
+
     return {
         'name': name,
         'score': score,
         'evidence_level': level,
-        'evidence_summary': f'Live search produced {len(relevant)} relevant target result(s) from {len(sources)} source URL(s).',
-        'sources': sources[:5],
+        'evidence_summary': summary,
+        'sources': sources[:8],
     }
 
-def summarize_fallback(name: str, industry: str, location: str, target_raw: str, local_raw: str, global_raw: str) -> dict:
-    target = target_evidence(target_raw, name, industry, location)
+def summarize_fallback(name: str, industry: str, location: str, target_raw: str, local_raw: str, global_raw: str, official_domain: str = "") -> dict:
+    target = target_evidence(target_raw, name, industry, location, official_domain)
     local = rank_candidates(local_raw, industry, location, 'local', name, 5)
     global_ = rank_candidates(global_raw, industry, location, 'global', name, 5)
     return {
