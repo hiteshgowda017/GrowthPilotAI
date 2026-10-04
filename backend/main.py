@@ -345,7 +345,7 @@ class GrowthPilotEngine:
         global_candidates = await self.verify_competitor_candidates(
             global_discovered, industry, location, "global", name
         )
-        target_info = target_evidence(target_data, name, industry, location)
+        target_info = target_evidence(target_data, name, industry, location, domain)
 
         # One synthesis call turns the verified live-search dossier into a
         # detailed competitor intelligence report and an executable strategy.
@@ -714,12 +714,15 @@ Return ONLY valid JSON in this exact shape:
         # Stage 1: establish the exact target entity before looking for competitors.
         target_queries = [
             f'"{name}"',
+            f'"{name}" official website',
             f'"{name}" "{location}"',
             f'"{name}" "{industry}"',
-            f'"{name}" official',
+            f'"{name}" company',
             f'"{name}" services',
             f'"{name}" reviews',
             f'"{name}" LinkedIn',
+            f'"{name}" headquarters',
+            f'"{name}" about us',
         ]
         if domain:
             target_queries.extend([
@@ -734,9 +737,11 @@ Return ONLY valid JSON in this exact shape:
             f'"{name}" alternatives "{location}"',
             f'"{name}" similar companies "{location}"',
             f'"{name}" competitors "{industry}" "{location}"',
-            f'"{industry}" companies "{location}" "{name}"',
-            f'"{industry}" providers "{location}" "{name}"',
-            f'"{industry}" services "{location}" "{name}"',
+            f'"{name}" rival "{location}" {industry}',
+            f'"{industry}" competitors "{location}"',
+            f'"{industry}" companies "{location}"',
+            f'"{industry}" providers "{location}"',
+            f'"{industry}" services "{location}"',
         ]
 
         global_queries = [
@@ -744,6 +749,7 @@ Return ONLY valid JSON in this exact shape:
             f'"{name}" international competitors "{industry}"',
             f'"{name}" global alternatives "{industry}"',
             f'"{name}" similar companies "{industry}"',
+            f'"{industry}" competitors "{name}"',
             f'"{industry}" companies similar to "{name}"',
             f'"{industry}" global companies similar to "{name}"',
         ]
@@ -766,7 +772,7 @@ Return ONLY valid JSON in this exact shape:
 
         # Deterministic evidence gate. This is also the no-AI emergency path.
         fallback = summarize_fallback(
-            name, industry, location, target_raw, local_raw, global_raw
+            name, industry, location, target_raw, local_raw, global_raw, domain
         )
 
         verified_local = await self.verify_competitor_candidates(
