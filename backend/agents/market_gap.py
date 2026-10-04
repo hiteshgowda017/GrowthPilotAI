@@ -58,8 +58,8 @@ class MarketGapAgent:
             print(f"[MarketGapAgent] Critical Pipeline Failure: {str(e)}")
             # Safe UI-matched fallback structure
             return {
-                "underserved_markets": "Niche localized enterprise support optimization channels.",
-                "missing_services": ["Programmatic integration blueprints", "Automated tracking analytics infrastructure"],
-                "opportunity_areas": ["Hyper-personalized customer retention layers"],
-                "growth_potential": "Data streaming normalization pending."
+                "underserved_markets": "Not verified from live evidence.",
+                "missing_services": [],
+                "opportunity_areas": [],
+                "growth_potential": "Not calculated because supporting competitor evidence was unavailable."
             }
