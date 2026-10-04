@@ -583,42 +583,54 @@ Return ONLY valid JSON in this exact shape:
         industry: str,
         location: str,
     ) -> dict:
-        """Evidence-first visibility audit with strict relevance filtering."""
+        """Deep live visibility audit driven by the user's five inputs."""
         print(f"=== VISIBILITY AUDIT: {name.upper()} | {industry} | {location} ===")
 
-        # Search the exact business first. Industry/location are constraints,
-        # then broader searches discover genuine local and global competitors.
+        domain = self.clean_domain(website)
+
+        # Stage 1: establish the exact target entity before looking for competitors.
         target_queries = [
-            f'"{name}" "{location}" official website',
-            f'"{name}" "{location}" {industry} services',
-            f'"{name}" "{location}" LinkedIn',
-            f'"{name}" "{location}" reviews',
+            f'"{name}"',
+            f'"{name}" "{location}"',
+            f'"{name}" "{industry}"',
+            f'"{name}" official',
+            f'"{name}" services',
+            f'"{name}" reviews',
+            f'"{name}" LinkedIn',
         ]
+        if domain:
+            target_queries.extend([
+                f'site:{domain}',
+                f'site:{domain} services',
+            ])
+
+        # Stage 2: competitor discovery is anchored to the exact target,
+        # with industry/location acting as constraints.
         local_queries = [
             f'"{name}" competitors "{location}"',
             f'"{name}" alternatives "{location}"',
             f'"{name}" similar companies "{location}"',
-            f'"{name}" competitors in "{location}"',
-            f'"{industry}" "{location}" independent company',
-            f'"{industry}" "{location}" local company',
-            f'"{industry}" near "{location}" company',
-            f'site:justdial.com "{industry}" "{location}"',
-            f'site:sulekha.com "{industry}" "{location}"',
-            f'site:indiamart.com "{industry}" "{location}"',
+            f'"{name}" competitors "{industry}" "{location}"',
+            f'"{industry}" companies "{location}" "{name}"',
+            f'"{industry}" providers "{location}" "{name}"',
+            f'"{industry}" services "{location}" "{name}"',
         ]
+
         global_queries = [
-            f'"{name}" global competitors',
-            f'"{name}" international competitors',
-            f'"{name}" global alternatives',
-            f'"{name}" similar companies worldwide',
-            f'leading "{industry}" companies worldwide',
-            f'"{industry}" global companies',
+            f'"{name}" global competitors "{industry}"',
+            f'"{name}" international competitors "{industry}"',
+            f'"{name}" global alternatives "{industry}"',
+            f'"{name}" similar companies "{industry}"',
+            f'"{industry}" companies similar to "{name}"',
+            f'"{industry}" global companies similar to "{name}"',
         ]
 
         async def collect(queries: list[str], region: str) -> str:
             chunks = []
             for query in queries:
-                result = await self.robust_search(query, max_results=6, retries=1, region=region)
+                result = await self.robust_search(
+                    query, max_results=6, retries=1, region=region
+                )
                 if result:
                     chunks.append(result)
             return "\n\n".join(chunks)
@@ -629,84 +641,196 @@ Return ONLY valid JSON in this exact shape:
             collect(global_queries, "us-en"),
         )
 
-        browser_data = ""
-        if self.use_browser_research:
-            browser_prompt = f"""
-Live competitive research. Target: {name}. Industry: {industry}. Location: {location}.
-Search the web for the exact business, real local companies providing the requested
-industry near the location, and genuinely international companies providing that industry.
-Reject films, books, actors, YouTube, Wikipedia, entertainment, people and unrelated
-acronym meanings. Give URLs and concrete evidence. Do not guess.
-"""
-            browser_data = await self.browser_research(browser_prompt)
-
-        # Deterministic filtering happens before AI synthesis.
-        fallback = summarize_fallback(name, industry, location, target_raw, local_raw, global_raw)
+        # Deterministic evidence gate. This is also the no-AI emergency path.
+        fallback = summarize_fallback(
+            name, industry, location, target_raw, local_raw, global_raw
+        )
 
         live_evidence = (
-            f"TARGET DDGS:\n{target_raw}\n\nLOCAL DDGS:\n{local_raw}\n\nGLOBAL DDGS:\n{global_raw}"
-            + (f"\n\nBROWSER ENRICHMENT:\n{browser_data[:20000]}" if browser_data else "")
+            f"TARGET DDGS:\n{target_raw}\n\n"
+            f"LOCAL DDGS:\n{local_raw}\n\n"
+            f"GLOBAL DDGS:\n{global_raw}"
         )
 
         if not live_evidence.strip():
             return fallback
 
         synthesis_prompt = f"""
-You are the senior competitive-intelligence analyst for GrowthPilot.
+You are GrowthPilot's senior LIVE DIGITAL VISIBILITY and COMPETITIVE-INTELLIGENCE analyst.
 
-TARGET
-Name: {name}
-Industry: {industry}
-Location: {location}
-Website: {website or "Not provided"}
-
-LIVE SEARCH EVIDENCE
+USER RESEARCH INPUTS
 ====================
-{live_evidence[:50000]}
+Target Corporation Name: {name}
+Production Domain URL: {website or "Not provided"}
+Market Vertical / Sector: {industry}
+Geographic Vector Hub: {location}
 
-STRICT ACCURACY RULES
-1. A competitor MUST be a real business/company offering {industry}.
-2. A local competitor MUST have evidence connecting it to {location} or its immediate market.
-3. A global leader MUST be a real international company relevant to {industry}.
-4. Reject films, movies, books, novels, actors, YouTube, Wikipedia, entertainment, people,
-   and unrelated meanings of acronyms.
-5. A search title alone is not proof. Prefer official company pages and reputable sources.
-6. Directory pages may discover a company but do not prove quality or market leadership.
-7. Never invent facts, services, locations, scores or recommendations.
-8. Scores measure DIGITAL VISIBILITY only; they are estimates, not market share.
-9. Every recommendation must follow from evidence actually supplied.
-10. If a candidate cannot be verified, OMIT it. Fewer results are better than wrong results.
-11. Return ONLY valid JSON.
+These five inputs define the research scope. The target must remain the exact
+business named above. Industry and location are constraints, not substitutes
+for the target identity.
 
-Return this schema:
+LIVE DDGS EVIDENCE
+==================
+{live_evidence[:60000]}
+
+STRICT ENTITY VERIFICATION
+==========================
+A LOCAL competitor is valid only if the supplied evidence supports:
+1. a real operating company/business,
+2. meaningful service/product overlap with "{industry}",
+3. a connection to "{location}" or its immediate local market.
+
+A GLOBAL competitor is valid only if the supplied evidence supports:
+1. a real operating company,
+2. meaningful relevance to "{industry}",
+3. a credible relationship to the target's market:
+   Direct competitor, Adjacent competitor, or Market benchmark.
+
+Reject:
+- Wikipedia/definition pages
+- YouTube/videos
+- films/movies/books/novels
+- actors/people
+- job listings/career pages
+- generic industry listicles
+- directory category pages
+- unrelated acronym meanings
+- generic "software", "IT", "technology" pages
+
+A directory can be used only as discovery evidence; it is not enough to claim
+market leadership, quality, revenue, market share or superiority.
+
+TARGET VERIFICATION
+===================
+Verify that the results actually refer to "{name}".
+When "{website}" is provided, matching-domain evidence is strong.
+Do not claim that a domain is officially owned by the target unless the evidence
+supports that conclusion.
+
+LIVE VISIBILITY INDEX
+=====================
+Produce a 0-100 OBSERVABLE LIVE WEB VISIBILITY score using only supplied evidence:
+- repeated appearance across distinct searches,
+- breadth of relevant results,
+- diversity of source domains,
+- official-domain presence,
+- local discoverability,
+- industry relevance.
+
+This score is NOT market share, revenue, customer count, valuation, business
+quality, or a Google ranking position.
+
+OUTPUT RULES
+============
+- Maximum 5 local competitors and 5 global competitors.
+- Fewer is better than wrong.
+- Every returned competitor requires an evidence summary and source URLs from
+  the supplied evidence.
+- If weakness is not evidenced, write "Not verified".
+- If market rank is not defensible, write "Relative position not verified".
+- Do not invent missing facts.
+- Return ONLY valid JSON.
+
+SCHEMA
+======
 {{
   "target": {{
-    "name": "TARGET_NAME",
+    "name": "{name}",
     "score": 0,
-    "evidence_level": "High, Medium, Low, or None",
-    "evidence_summary": "Verified live-search evidence"
+    "evidence_level": "High",
+    "evidence_summary": "What the live evidence verifies",
+    "sources": []
   }},
   "local_competitors": [],
   "market_leaders": [],
-  "insight_summary": "Evidence-based summary only",
+  "insight_summary": "Evidence-based diagnostic only",
   "research_coverage": {{
-    "status": "live_evidence",
+    "status": "live_ddgs",
     "provider": "DDGS",
-    "target": "researched",
-    "local": "researched",
-    "global": "researched"
+    "target_results": 0,
+    "local_results": 0,
+    "global_results": 0,
+    "local_candidates": 0,
+    "global_candidates": 0
   }}
 }}
-
-Each competitor object must contain name, score, evidence_level, evidence_summary and sources.
-Maximum 5 local and 5 global companies. Never fill a slot with an unsupported company.
 """
 
         try:
-            return await self.generate_json(synthesis_prompt, temperature=0.05)
+            result = await self.generate_json(
+                synthesis_prompt, temperature=0.03
+            )
+
+            # Final server-side verification: AI-selected competitors must also
+            # exist in the deterministic evidence candidate sets.
+            deterministic_local = {
+                str(x.get("name", "")).strip().lower(): x
+                for x in fallback.get("local_competitors", [])
+                if isinstance(x, dict)
+            }
+            deterministic_global = {
+                str(x.get("name", "")).strip().lower(): x
+                for x in fallback.get("market_leaders", [])
+                if isinstance(x, dict)
+            }
+
+            verified_local = []
+            for x in result.get("local_competitors", []):
+                if not isinstance(x, dict):
+                    continue
+                key = str(x.get("name", "")).strip().lower()
+                if key in deterministic_local:
+                    base = deterministic_local[key]
+                    verified_local.append({
+                        **base,
+                        **x,
+                        "sources": list(dict.fromkeys(
+                            (base.get("sources") or []) + (x.get("sources") or [])
+                        ))[:5],
+                    })
+
+            verified_global = []
+            for x in result.get("market_leaders", []):
+                if not isinstance(x, dict):
+                    continue
+                key = str(x.get("name", "")).strip().lower()
+                if key in deterministic_global:
+                    base = deterministic_global[key]
+                    verified_global.append({
+                        **base,
+                        **x,
+                        "sources": list(dict.fromkeys(
+                            (base.get("sources") or []) + (x.get("sources") or [])
+                        ))[:5],
+                    })
+
+            result["local_competitors"] = verified_local[:5]
+            result["market_leaders"] = verified_global[:5]
+            result["target"] = {
+                **fallback.get("target", {}),
+                **(result.get("target") or {}),
+            }
+            result["research_coverage"] = {
+                **fallback.get("research_coverage", {}),
+                **(result.get("research_coverage") or {}),
+                "status": "live_ddgs",
+                "provider": "DDGS",
+                "target_results": len(target_raw.split("SEARCH QUERY:")) - 1,
+                "local_results": len(local_raw.split("SEARCH QUERY:")) - 1,
+                "global_results": len(global_raw.split("SEARCH QUERY:")) - 1,
+                "local_candidates": len(result["local_competitors"]),
+                "global_candidates": len(result["market_leaders"]),
+            }
+            return result
+
         except HTTPException as exc:
             if exc.status_code == 429:
-                print("[VISIBILITY] Groq synthesis rate-limited; using filtered DDGS result.")
+                fallback["insight_summary"] = (
+                    "Live DDGS research completed, but the live AI synthesis model is "
+                    "temporarily rate-limited. The competitors below are evidence-filtered "
+                    "live-search candidates only; no AI conclusions were generated."
+                )
+                fallback["research_coverage"]["ai_synthesis"] = "rate_limited"
                 return fallback
             raise
 
