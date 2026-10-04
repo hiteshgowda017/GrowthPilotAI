@@ -50,8 +50,8 @@ class BusinessAnalysisAgent:
         except Exception as e:
             print(f"[BusinessAnalysisAgent] Extraction Error: {str(e)}")
             return {
-                "summary": f"{name} is positioning itself within the {industry} sector with localized infrastructure.",
-                "market_position": "Market Challenger",
-                "target_audience": "Core industry demographics within the specified geographic vector.",
+                "summary": "Live AI business analysis was unavailable; no unsupported company claims were generated.",
+                "market_position": "Not verified",
+                "target_audience": "Not verified",
                 "growth_objective": goal
             }
