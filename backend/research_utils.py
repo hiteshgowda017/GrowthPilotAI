@@ -274,6 +274,71 @@ def evidence_visibility_score(items: list[dict], name: str, official_domain: str
 
     return min(100, score)
 
+
+def candidate_verification(raw: str, candidate: str, industry: str, location: str, role: str, target_name: str = "") -> dict | None:
+    """Verify one discovered company against fresh exact-name search evidence."""
+    candidate_norm = _norm(candidate)
+    if not candidate_norm or candidate_norm in {_norm(target_name), ""}:
+        return None
+
+    items = parse_search_results(raw)
+    matching = []
+    for item in items:
+        if _is_noise(item):
+            continue
+        title = _norm(item.get("title", ""))
+        body = _norm(item.get("body", ""))
+        href = _norm(item.get("href", ""))
+        evidence = " ".join([title, body, href])
+        exact = candidate_norm in evidence
+        if not exact:
+            # Multi-word names sometimes appear without punctuation/casing changes.
+            candidate_parts = _tokens(candidate)
+            exact = len(candidate_parts) >= 2 and sum(p in evidence for p in candidate_parts) >= max(2, len(candidate_parts) - 1)
+        if not exact:
+            continue
+
+        industry_terms = expand_industry_terms(industry)
+        industry_hits = sum(1 for term in industry_terms if term in evidence)
+
+        if role == "local":
+            location_terms = expand_location_terms(location)
+            location_hits = sum(1 for term in location_terms if term in evidence)
+            if industry_hits == 0 or location_hits == 0:
+                continue
+        else:
+            if industry_hits == 0:
+                continue
+
+        matching.append(item)
+
+    if not matching:
+        return None
+
+    domains = []
+    for item in matching:
+        host = urlparse(item.get("href", "")).netloc.lower().replace("www.", "")
+        if host and host not in domains and not any(d in host for d in DIRECTORY_DOMAINS):
+            domains.append(host)
+
+    if len(matching) < 2 or len(domains) < 1:
+        return None
+
+    source_urls = []
+    for item in matching:
+        href = item.get("href", "")
+        if href and href not in source_urls:
+            source_urls.append(href)
+
+    score = min(100, 50 + min(20, len(matching) * 5) + min(20, len(domains) * 5))
+    return {
+        "name": candidate,
+        "verification_score": score,
+        "evidence_level": "High" if score >= 80 else "Medium",
+        "evidence_summary": f"Fresh exact-name search found {len(matching)} relevant result(s) across {len(domains)} source domain(s) supporting this {role} company.",
+        "sources": source_urls[:5],
+    }
+
 def target_evidence(raw: str, name: str, industry: str, location: str) -> dict:
     items = parse_search_results(raw)
     relevant = [x for x in items if _match_score(x, industry, location, 'target', name) >= 35]
