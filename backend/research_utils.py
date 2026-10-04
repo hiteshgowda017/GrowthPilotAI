@@ -301,6 +301,16 @@ def candidate_verification(raw: str, candidate: str, industry: str, location: st
         industry_terms = expand_industry_terms(industry)
         industry_hits = sum(1 for term in industry_terms if term in evidence)
 
+        company_signals = {
+            "company", "corporation", "technologies", "technology", "solutions",
+            "systems", "software", "consulting", "services", "pvt ltd", "private limited",
+            "limited", "inc", "llc", "corp", "founded", "headquarters", "about us",
+            "our services", "contact us", "linkedin"
+        }
+        company_identity_hits = sum(1 for signal in company_signals if signal in evidence)
+        if company_identity_hits == 0:
+            continue
+
         if role == "local":
             location_terms = expand_location_terms(location)
             location_hits = sum(1 for term in location_terms if term in evidence)
