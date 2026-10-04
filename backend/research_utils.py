@@ -112,6 +112,32 @@ def candidate_name(title: str, href: str) -> str:
     if low in generic:
         return ''
 
+    # Convert common SEO page titles into a probable company label while still
+    # requiring a later exact-name verification pass.
+    service_terms = {
+        "software development", "it services", "technology", "solutions",
+        "consulting", "services", "company", "business", "digital",
+        "web development", "app development", "managed services",
+    }
+    parts = [p.strip(" -–—|:") for p in re.split(r"[|]", value) if p.strip()]
+    if len(parts) >= 2:
+        useful = [p for p in parts if p]
+        # Prefer the side that looks like a brand/company name rather than a
+        # long SEO/service description.
+        short_parts = [p for p in useful if len(p.split()) <= 6 and
+                       sum(term in _norm(p) for term in service_terms) <= 2]
+        if short_parts:
+            value = short_parts[0]
+            low = _norm(value)
+
+    if len(value.split()) > 8:
+        try:
+            host = urlparse(href).netloc.lower().replace("www.", "")
+            if host and not any(d in host for d in DIRECTORY_DOMAINS):
+                value = host.split('.')[0].replace('-', ' ').strip()
+        except Exception:
+            pass
+
     return value[:120]
 
 def _match_score(item: dict, industry: str, location: str, role: str, target_name: str = '') -> int:
