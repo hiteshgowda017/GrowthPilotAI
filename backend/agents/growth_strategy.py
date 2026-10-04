@@ -50,8 +50,8 @@ class GrowthStrategyAgent:
         except Exception as e:
             print(f"[GrowthStrategyAgent] Error: {str(e)}")
             return {
-                "quick_wins": ["Optimize current conversion funnels based on initial audit data."],
-                "plan_30_day": ["Deploy targeted visibility campaigns into competitor blind spots."],
-                "plan_90_day": ["Scale infrastructure to support captured market voids."],
-                "expected_impact": "Incremental revenue expansion and stabilized market positioning."
+                "quick_wins": [],
+                "plan_30_day": [],
+                "plan_90_day": [],
+                "expected_impact": "Not projected because the required live evidence was unavailable."
             }
