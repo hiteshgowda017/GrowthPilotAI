@@ -287,8 +287,14 @@ class GrowthPilotEngine:
             collect(review_queries, "in-en"),
         )
 
-        local_candidates = rank_candidates(local_data, industry, location, "local", name, 8)
-        global_candidates = rank_candidates(global_data, industry, location, "global", name, 8)
+        local_discovered = rank_candidates(local_data, industry, location, "local", name, 8)
+        global_discovered = rank_candidates(global_data, industry, location, "global", name, 8)
+        local_candidates = await self.verify_competitor_candidates(
+            local_discovered, industry, location, "local", name
+        )
+        global_candidates = await self.verify_competitor_candidates(
+            global_discovered, industry, location, "global", name
+        )
         target_info = target_evidence(target_data, name, industry, location)
 
         # One synthesis call turns the verified live-search dossier into a
