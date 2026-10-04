@@ -60,14 +60,24 @@ def expand_location_terms(location: str) -> set[str]:
     return terms
 
 def parse_search_results(raw: str) -> list[dict]:
-    pattern = re.compile(r"-\s*(?P<title>.*?)\n\s*(?P<body>.*?)\n\s*Source:\s*(?P<href>\S+)", re.DOTALL)
+    pattern = re.compile(
+        r"(?:SEARCH QUERY:\s*(?P<query>[^\n]*)\n)?"
+        r"-\s*(?P<title>.*?)\n\s*(?P<body>.*?)\n\s*Source:\s*(?P<href>\S+)",
+        re.DOTALL,
+    )
     items = []
     for match in pattern.finditer(raw or ''):
         title = " ".join(match.group("title").split())
         body = " ".join(match.group("body").split())
         href = match.group("href").strip()
+        query = " ".join((match.group("query") or "").split())
         if title or body or href:
-            items.append({"title": title, "body": body, "href": href})
+            items.append({
+                "title": title,
+                "body": body,
+                "href": href,
+                "query": query,
+            })
     return items
 
 def _is_noise(item: dict) -> bool:
